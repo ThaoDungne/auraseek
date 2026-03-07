@@ -84,6 +84,7 @@ impl SurrealDb {
             DEFINE FIELD IF NOT EXISTS objects.*.bbox.h    ON media TYPE float;
             DEFINE FIELD IF NOT EXISTS objects.*.mask_area ON media TYPE option<int>;
             DEFINE FIELD IF NOT EXISTS objects.*.mask_path ON media TYPE option<string>;
+            DEFINE FIELD IF NOT EXISTS objects.*.mask_rle  ON media TYPE option<array>;
             DEFINE FIELD IF NOT EXISTS faces              ON media TYPE array DEFAULT [];
             DEFINE FIELD IF NOT EXISTS faces.*            ON media TYPE object;
             DEFINE FIELD IF NOT EXISTS faces.*.face_id    ON media TYPE string;

@@ -87,6 +87,7 @@ pub async fn ingest_folder(
                     },
                     mask_area: Some(o.mask_area),
                     mask_path: None,
+                    mask_rle: Some(o.mask_rle.iter().map(|&(a, b)| [a, b]).collect()),
                 }).collect();
 
                 let faces: Vec<FaceEntry> = output.faces.iter().map(|f| FaceEntry {

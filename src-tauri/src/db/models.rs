@@ -32,6 +32,8 @@ pub struct Bbox {
     pub h: f32,
 }
 
+/// RLE format: each [offset, length] means pixels [offset..offset+length) are 1 (row-major index).
+/// Decode with image width/height: total_pixels = w * h.
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 pub struct ObjectEntry {
     pub class_name: String,
@@ -41,6 +43,9 @@ pub struct ObjectEntry {
     pub mask_area:  Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mask_path:  Option<String>,
+    /// Run-length encoded mask: array of [offset, length] for 1-pixels. Use media width/height to decode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mask_rle:   Option<Vec<[u32; 2]>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]

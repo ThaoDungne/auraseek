@@ -367,7 +367,7 @@ pub fn run() {
 fn main() -> Result<()> {
     Logger::init("log/auraseek.log");
 
-    // Nếu bạn muốn test việc sinh ra ảnh vẽ bbbox (vẽ khung nhận diện lỗi), log, json vector, cropped faces như xưa
+    // Nếu muốn test việc sinh ra ảnh vẽ bbbox (vẽ khung nhận diện lỗi), log, json vector, cropped faces 
     // Thì đổi giá trị này thành true:
     let run_cli_debug_ingest = false; 
 
