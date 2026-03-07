@@ -12,7 +12,7 @@ use crate::log_info;
 const SCORE_THRESHOLD: f32 = 0.95; 
 const NMS_THRESHOLD: f32 = 0.3;
 const TOP_K: i32 = 5000;
-const COSINE_THRESHOLD: f32 = 0.2;
+const COSINE_THRESHOLD: f32 = 0.36;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct FaceGroup {
