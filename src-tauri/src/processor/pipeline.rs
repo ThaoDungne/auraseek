@@ -10,6 +10,11 @@ use crate::utils::visualize::{draw_detections, draw_segmentation, draw_faces, ex
 use crate::{log_info, log_warn, utils::{GREEN, YELLOW, RED, CYAN, MAGENTA, BOLD, RESET}};
 use crate::processor::vision::yolo_postprocess::DetectionRecord;
 use crate::model::face::FaceGroup;
+use opencv::{
+    core::{Mat, Rect},
+    imgcodecs::{imread, IMREAD_COLOR},
+    prelude::*,
+};
 
 /// Structured output from the AI pipeline, ready for DB storage.
 #[derive(Debug, Clone)]
@@ -91,30 +96,71 @@ impl AuraSeekEngine {
         let raw = self.yolo.detect(lb.blob.clone())?;
         let objects = YoloProcessor::postprocess(&raw, &lb, 0.25, 0.45);
 
-        // 3. Face detection
+        // 3. Face detection — only within person bboxes from YOLO
         let mut faces = vec![];
         if let Some(ref mut fm) = self.face {
-            if let Ok(detected) = fm.detect_from_path(img_path, &self.face_db) {
-                for mut f in detected {
-                    if f.face_id == "unknown_placeholder" {
-                        let mut best_score = 0.36;
-                        let mut cached_id = None;
-                        for (cached_emb, id) in &self.session_faces {
-                            let score = cosine_similarity(&f.embedding, cached_emb);
-                            if score > best_score {
-                                best_score = score;
-                                cached_id = Some(id.clone());
+            let person_bboxes: Vec<[f32; 4]> = objects.iter()
+                .filter(|o| o.class_name == "person")
+                .map(|o| o.bbox)
+                .collect();
+
+            if person_bboxes.is_empty() {
+                // No person detected by YOLO — run on full image as fallback
+                if let Ok(detected) = fm.detect_from_path(img_path, &self.face_db) {
+                    faces = detected;
+                }
+            } else {
+                // Crop each person bbox and run face detection on the crop
+                let frame = imread(img_path, IMREAD_COLOR)?;
+                if !frame.empty() {
+                    let img_size = frame.size()?;
+                    let (img_w, img_h) = (img_size.width, img_size.height);
+
+                    for bbox in &person_bboxes {
+                        let x1 = (bbox[0].max(0.0) as i32).min(img_w - 1);
+                        let y1 = (bbox[1].max(0.0) as i32).min(img_h - 1);
+                        let x2 = (bbox[2].max(0.0) as i32).min(img_w);
+                        let y2 = (bbox[3].max(0.0) as i32).min(img_h);
+                        let cw = x2 - x1;
+                        let ch = y2 - y1;
+                        if cw < 30 || ch < 30 { continue; }
+
+                        let roi = Mat::roi(&frame, Rect::new(x1, y1, cw, ch))?;
+                        let crop = roi.try_clone()?;
+
+                        if let Ok(detected) = fm.detect_from_mat(&crop, &self.face_db) {
+                            for mut f in detected {
+                                // Map face bbox from crop coords back to original image coords
+                                f.bbox[0] += x1 as f32;
+                                f.bbox[1] += y1 as f32;
+                                f.bbox[2] += x1 as f32;
+                                f.bbox[3] += y1 as f32;
+                                faces.push(f);
                             }
                         }
-                        if let Some(id) = cached_id {
-                            f.face_id = id;
-                        } else {
-                            let new_id = Uuid::new_v4().to_string();
-                            f.face_id = new_id.clone();
-                            self.session_faces.push((f.embedding.clone(), new_id));
+                    }
+                }
+            }
+
+            // Session face matching for unknown faces
+            for f in faces.iter_mut() {
+                if f.face_id == "unknown_placeholder" {
+                    let mut best_score = 0.55;
+                    let mut cached_id = None;
+                    for (cached_emb, id) in &self.session_faces {
+                        let score = cosine_similarity(&f.embedding, cached_emb);
+                        if score > best_score {
+                            best_score = score;
+                            cached_id = Some(id.clone());
                         }
                     }
-                    faces.push(f);
+                    if let Some(id) = cached_id {
+                        f.face_id = id;
+                    } else {
+                        let new_id = Uuid::new_v4().to_string();
+                        f.face_id = new_id.clone();
+                        self.session_faces.push((f.embedding.clone(), new_id));
+                    }
                 }
             }
         }
@@ -188,15 +234,48 @@ impl AuraSeekEngine {
         save_rgb(px, w, h, &format!("{out_dir}/det_seg.jpg"))?;
         let viz_dur = viz_start.elapsed();
 
-        // 4. face detection with session cache
+        // 4. face detection — only within person bboxes from YOLO
         let f_start = Instant::now();
         let mut face_count = 0;
         if let Some(ref mut fm) = self.face {
-            let mut faces = fm.detect_from_path(img_str, &self.face_db)?;
-            
+            let person_bboxes: Vec<[f32; 4]> = records.iter()
+                .filter(|o| o.class_name == "person")
+                .map(|o| o.bbox)
+                .collect();
+
+            let mut faces = if person_bboxes.is_empty() {
+                fm.detect_from_path(img_str, &self.face_db)?
+            } else {
+                let frame = imread(img_str, IMREAD_COLOR)?;
+                let img_size = frame.size()?;
+                let (img_w, img_h) = (img_size.width, img_size.height);
+                let mut all_faces = Vec::new();
+                for bbox in &person_bboxes {
+                    let x1 = (bbox[0].max(0.0) as i32).min(img_w - 1);
+                    let y1 = (bbox[1].max(0.0) as i32).min(img_h - 1);
+                    let x2 = (bbox[2].max(0.0) as i32).min(img_w);
+                    let y2 = (bbox[3].max(0.0) as i32).min(img_h);
+                    let cw = x2 - x1;
+                    let ch = y2 - y1;
+                    if cw < 30 || ch < 30 { continue; }
+                    let roi = Mat::roi(&frame, Rect::new(x1, y1, cw, ch))?;
+                    let crop = roi.try_clone()?;
+                    if let Ok(detected) = fm.detect_from_mat(&crop, &self.face_db) {
+                        for mut f in detected {
+                            f.bbox[0] += x1 as f32;
+                            f.bbox[1] += y1 as f32;
+                            f.bbox[2] += x1 as f32;
+                            f.bbox[3] += y1 as f32;
+                            all_faces.push(f);
+                        }
+                    }
+                }
+                all_faces
+            };
+
             for f in faces.iter_mut() {
                 if f.face_id == "unknown_placeholder" {
-                    let mut best_score = 0.36; 
+                    let mut best_score = 0.55; 
                     let mut cached_id = None;
 
                     for (cached_emb, id) in &self.session_faces {

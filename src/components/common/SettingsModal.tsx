@@ -5,10 +5,10 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog";
-import { Settings, HardDrive, Cpu, FolderPlus, Database, CheckCircle2, AlertCircle } from "lucide-react";
+import { Settings, HardDrive, Cpu, FolderPlus, CheckCircle2, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useState, useEffect } from "react";
-import { AuraSeekApi, type IngestSummary, type AppStatus } from "@/lib/api";
+import { useState } from "react";
+import { AuraSeekApi, type IngestSummary } from "@/lib/api";
 
 interface SettingsModalProps {
     open: boolean;
@@ -20,30 +20,8 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
     const [sourceFolder, setSourceFolder] = useState<string>(() =>
         localStorage.getItem("auraseek_source") || ""
     );
-    const [mongoUri, setMongoUri] = useState<string>(() =>
-        localStorage.getItem("auraseek_mongo") || "mongodb://localhost:27017"
-    );
     const [scanResult, setScanResult] = useState<IngestSummary | null>(null);
     const [scanError, setScanError] = useState<string | null>(null);
-    const [status, setStatus] = useState<AppStatus | null>(null);
-
-    useEffect(() => {
-        if (open) {
-            AuraSeekApi.getStatus().then(setStatus).catch(() => setStatus(null));
-        }
-    }, [open]);
-
-    const handleSaveUri = async () => {
-        localStorage.setItem("auraseek_mongo", mongoUri);
-        try {
-            await AuraSeekApi.setMongoUri(mongoUri);
-            await AuraSeekApi.init();
-            const s = await AuraSeekApi.getStatus();
-            setStatus(s);
-        } catch (e) {
-            setScanError(String(e));
-        }
-    };
 
     const handleScan = async () => {
         if (!sourceFolder.trim()) {
@@ -56,7 +34,6 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
         localStorage.setItem("auraseek_source", sourceFolder);
 
         try {
-            // Init if not yet done
             await AuraSeekApi.init();
             const result = await AuraSeekApi.scanFolder(sourceFolder);
             setScanResult(result);
@@ -74,52 +51,14 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
                 <DialogHeader className="px-6 py-5 border-b border-border/10 bg-muted/30">
                     <DialogTitle className="flex items-center gap-2 text-xl font-medium tracking-tight text-foreground">
                         <Settings className="w-5 h-5 text-primary" />
-                        Cài đặt hệ thống
+                        Cài đặt
                     </DialogTitle>
                     <DialogDescription className="mt-1.5 leading-relaxed">
-                        Quản lý thư viện ảnh và cấu hình hệ thống AuraSeek
+                        Quản lý thư viện ảnh AuraSeek
                     </DialogDescription>
                 </DialogHeader>
 
                 <div className="px-6 py-6 flex flex-col gap-6 overflow-y-auto max-h-[70vh]">
-
-                    {/* System Status */}
-                    {status && (
-                        <div className="rounded-xl border border-border/20 bg-muted/20 p-4">
-                            <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-                                <Database className="w-4 h-4 text-primary" />
-                                Trạng thái hệ thống
-                            </h3>
-                            <div className="grid grid-cols-3 gap-3 text-center text-xs">
-                                <StatusBadge ok={status.engine_ready} label="AI Engine" />
-                                <StatusBadge ok={status.db_ready} label="MongoDB" />
-                                <div>
-                                    <div className="text-lg font-bold text-foreground">{status.vector_count.toLocaleString()}</div>
-                                    <div className="text-muted-foreground">Embeddings</div>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* MongoDB URI */}
-                    <div className="space-y-3">
-                        <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                            <Database className="w-4 h-4 text-primary" />
-                            Kết nối MongoDB
-                        </h3>
-                        <div className="flex gap-2">
-                            <input
-                                type="text"
-                                value={mongoUri}
-                                onChange={e => setMongoUri(e.target.value)}
-                                placeholder="mongodb://localhost:27017"
-                                className="flex-1 h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm font-mono"
-                            />
-                            <Button size="sm" variant="outline" onClick={handleSaveUri} className="h-9 rounded-lg shrink-0">
-                                Kết nối
-                            </Button>
-                        </div>
-                    </div>
 
                     {/* Source Folder */}
                     <div className="space-y-3">
@@ -130,15 +69,13 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
                         <p className="text-sm text-muted-foreground leading-relaxed">
                             Nhập đường dẫn thư mục chứa ảnh/video. AI sẽ tự động quét, phát hiện đối tượng, nhận diện khuôn mặt và tạo embedding.
                         </p>
-                        <div className="flex gap-2">
-                            <input
-                                type="text"
-                                value={sourceFolder}
-                                onChange={e => setSourceFolder(e.target.value)}
-                                placeholder="/home/user/Pictures hoặc C:\Users\Photos"
-                                className="flex-1 h-10 rounded-md border border-input bg-transparent px-3 py-1 text-sm font-mono"
-                            />
-                        </div>
+                        <input
+                            type="text"
+                            value={sourceFolder}
+                            onChange={e => setSourceFolder(e.target.value)}
+                            placeholder="/home/user/Pictures"
+                            className="flex h-10 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm font-mono"
+                        />
 
                         <Button
                             onClick={handleScan}
@@ -190,23 +127,11 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
                         </div>
                         <div>
                             <h3 className="text-base font-medium tracking-tight text-foreground">AuraSeek</h3>
-                            <p className="text-xs text-muted-foreground mt-0.5">Phiên bản 1.0.0 · Local AI Powered · Offline</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">Phiên bản 1.0.0 · SurrealDB + Local AI · Offline</p>
                         </div>
                     </div>
                 </div>
             </DialogContent>
         </Dialog>
-    );
-}
-
-function StatusBadge({ ok, label }: { ok: boolean; label: string }) {
-    return (
-        <div>
-            <div className={`flex items-center justify-center gap-1 font-medium ${ok ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
-                {ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
-                <span className="text-xs">{ok ? "Online" : "Offline"}</span>
-            </div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">{label}</div>
-        </div>
     );
 }

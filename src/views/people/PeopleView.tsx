@@ -1,21 +1,115 @@
-import { useState } from "react";
-import type { Photo } from "@/types/photo.type";
+import { useState, useEffect, useCallback } from "react";
 import type { PersonGroup } from "@/lib/api";
 import { localFileUrl, AuraSeekApi } from "@/lib/api";
-import { Pencil, Check, X } from "lucide-react";
+import { Pencil, Check, X, User } from "lucide-react";
 
 interface PeopleViewProps {
-    photos?: Photo[];
     people?: PersonGroup[];
     onNavigate?: (payload: any) => void;
 }
 
+const AVATAR_PX = 112;
+
+/**
+ * Renders a face-cropped avatar.
+ * Takes the face bbox, doubles its size (centered on face), and crops.
+ * Uses CSS background-image for reliable crop rendering.
+ */
+function FaceCropAvatar({
+    imageUrl,
+    bbox,
+    alt,
+}: {
+    imageUrl: string;
+    bbox: { x: number; y: number; w: number; h: number } | null;
+    alt: string;
+}) {
+    const [bgStyle, setBgStyle] = useState<React.CSSProperties | null>(null);
+    const [loaded, setLoaded] = useState(false);
+    const [failed, setFailed] = useState(false);
+
+    const computeCrop = useCallback((naturalW: number, naturalH: number) => {
+        if (!bbox || !naturalW || !naturalH) {
+            setBgStyle({
+                backgroundImage: `url("${imageUrl}")`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+            });
+            setLoaded(true);
+            return;
+        }
+
+        // Face center in original image pixels
+        const faceCx = bbox.x + bbox.w / 2;
+        const faceCy = bbox.y + bbox.h / 2;
+
+        // Crop region = 2x the face bbox, made square
+        const cropSize = Math.max(bbox.w, bbox.h) * 2;
+
+        // Center the square crop on the face, clamped to image bounds
+        let cropX = faceCx - cropSize / 2;
+        let cropY = faceCy - cropSize / 2;
+        const clampedSize = Math.min(cropSize, naturalW, naturalH);
+        cropX = Math.max(0, Math.min(cropX, naturalW - clampedSize));
+        cropY = Math.max(0, Math.min(cropY, naturalH - clampedSize));
+
+        // background-size: scale full image so cropSize maps to AVATAR_PX
+        const scale = AVATAR_PX / clampedSize;
+        const bgW = naturalW * scale;
+        const bgH = naturalH * scale;
+
+        setBgStyle({
+            backgroundImage: `url("${imageUrl}")`,
+            backgroundSize: `${bgW}px ${bgH}px`,
+            backgroundPosition: `${-cropX * scale}px ${-cropY * scale}px`,
+            backgroundRepeat: "no-repeat",
+        });
+        setLoaded(true);
+    }, [bbox, imageUrl]);
+
+    useEffect(() => {
+        setFailed(false);
+        setLoaded(false);
+        setBgStyle(null);
+
+        const img = new Image();
+        img.onload = () => computeCrop(img.naturalWidth, img.naturalHeight);
+        img.onerror = () => setFailed(true);
+        img.src = imageUrl;
+
+        return () => { img.onload = null; img.onerror = null; };
+    }, [imageUrl, computeCrop]);
+
+    if (failed) {
+        return (
+            <div className="w-full h-full flex items-center justify-center bg-muted text-muted-foreground">
+                <User className="w-10 h-10 opacity-40" />
+            </div>
+        );
+    }
+
+    if (!loaded || !bgStyle) {
+        return <div className="w-full h-full bg-muted animate-pulse rounded-full" />;
+    }
+
+    return (
+        <div
+            className="w-full h-full rounded-full transition-transform duration-500 ease-out group-hover:scale-105"
+            style={bgStyle}
+            role="img"
+            aria-label={alt}
+        />
+    );
+}
+
 function PersonCard({
     person,
+    index,
     onNavigate,
     onRename,
 }: {
     person: PersonGroup;
+    index: number;
     onNavigate?: (payload: any) => void;
     onRename?: (faceId: string, name: string) => void;
 }) {
@@ -33,25 +127,30 @@ function PersonCard({
         setEditing(false);
     };
 
-    const displayName = person.name || `Người ${person.face_id.substring(0, 4).toUpperCase()}`;
-    const coverUrl = person.cover_path
-        ? localFileUrl(person.cover_path)
-        : `https://api.dicebear.com/7.x/thumbs/svg?seed=${person.face_id}`;
+    const displayName = person.name || `Người ${index + 1}`;
+
+    // Use thumbnail (matches face_bbox) when available, fall back to cover_path
+    const imgPath = person.thumbnail || person.cover_path;
+    const imageUrl = imgPath ? localFileUrl(imgPath) : null;
 
     return (
         <div className="group flex flex-col items-center gap-3">
             <div
-                className="w-24 h-24 sm:w-28 sm:h-28 rounded-full overflow-hidden bg-muted transition-all duration-300 ring-2 ring-transparent group-hover:ring-primary shadow-sm hover:shadow-md cursor-pointer"
+                className="relative rounded-full overflow-hidden bg-muted transition-all duration-300 ring-2 ring-transparent group-hover:ring-primary shadow-sm hover:shadow-md cursor-pointer"
+                style={{ width: AVATAR_PX, height: AVATAR_PX }}
                 onClick={() => onNavigate?.({ id: person.face_id, title: displayName })}
             >
-                <img
-                    src={coverUrl}
-                    alt={displayName}
-                    className="w-full h-full object-cover transition-transform duration-500 ease-out group-hover:scale-110"
-                    onError={(e) => {
-                        (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/thumbs/svg?seed=${person.face_id}`;
-                    }}
-                />
+                {imageUrl ? (
+                    <FaceCropAvatar
+                        imageUrl={imageUrl}
+                        bbox={person.face_bbox}
+                        alt={displayName}
+                    />
+                ) : (
+                    <div className="w-full h-full flex items-center justify-center bg-muted text-muted-foreground">
+                        <User className="w-10 h-10 opacity-40" />
+                    </div>
+                )}
             </div>
 
             <div className="flex flex-col items-center gap-0.5 w-full px-1">
@@ -85,8 +184,12 @@ function PersonCard({
     );
 }
 
-export function PeopleView({ photos = [], people = [], onNavigate }: PeopleViewProps) {
+export function PeopleView({ people = [], onNavigate }: PeopleViewProps) {
     const [localPeople, setLocalPeople] = useState<PersonGroup[]>(people);
+
+    useEffect(() => {
+        setLocalPeople(people);
+    }, [people]);
 
     const handleRename = (faceId: string, name: string) => {
         setLocalPeople(prev =>
@@ -94,40 +197,17 @@ export function PeopleView({ photos = [], people = [], onNavigate }: PeopleViewP
         );
     };
 
-    const displayPeople = localPeople.length > 0 ? localPeople : people;
-
-    // Fallback: derive from photos if no people from DB
-    const legacyPeople = photos.reduce((acc, photo) => {
-        photo.faces?.forEach((faceId) => {
-            if (!acc[faceId]) {
-                acc[faceId] = {
-                    face_id: faceId,
-                    name: null,
-                    photo_count: 0,
-                    cover_path: photo.url,
-                    thumbnail: null,
-                };
-            }
-            acc[faceId].photo_count++;
-        });
-        return acc;
-    }, {} as Record<string, PersonGroup>);
-
-    const allPeople = displayPeople.length > 0
-        ? displayPeople
-        : Object.values(legacyPeople).sort((a, b) => b.photo_count - a.photo_count);
-
     return (
         <div className="flex-1 overflow-y-auto px-6 py-8 will-change-scroll">
             <div className="max-w-7xl mx-auto space-y-8">
                 <div>
-                    <h1 className="text-2xl font-medium tracking-tight">Người và thú cưng</h1>
+                    <h1 className="text-2xl font-medium tracking-tight">Người</h1>
                     <p className="text-muted-foreground mt-1 text-sm">
                         Tự động nhóm khuôn mặt bằng AI. Click vào tên để đặt tên dễ nhớ hơn.
                     </p>
                 </div>
 
-                {allPeople.length === 0 ? (
+                {localPeople.length === 0 ? (
                     <div className="text-center py-20 text-muted-foreground opacity-60">
                         <div className="text-5xl mb-4">🤖</div>
                         <p className="font-medium">Chưa có khuôn mặt nào được nhận diện</p>
@@ -135,10 +215,11 @@ export function PeopleView({ photos = [], people = [], onNavigate }: PeopleViewP
                     </div>
                 ) : (
                     <div className="grid grid-cols-2 min-[500px]:grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-y-8 gap-x-4">
-                        {allPeople.map((person) => (
+                        {localPeople.map((person, i) => (
                             <PersonCard
                                 key={person.face_id}
                                 person={person}
+                                index={i}
                                 onNavigate={onNavigate}
                                 onRename={handleRename}
                             />

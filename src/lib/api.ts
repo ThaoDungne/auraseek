@@ -2,6 +2,26 @@ import { invoke } from "@tauri-apps/api/core";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+export interface BboxInfo {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+}
+
+export interface DetectedObject {
+    class_name: string;
+    conf: number;
+    bbox: BboxInfo;
+}
+
+export interface DetectedFace {
+    face_id: string;
+    name: string | null;
+    conf: number;
+    bbox: BboxInfo;
+}
+
 export interface SearchResultMeta {
     width: number | null;
     height: number | null;
@@ -27,6 +47,10 @@ export interface TimelineItem {
     created_at: string | null;
     objects: string[];
     faces: string[];
+    face_ids: string[];
+    favorite: boolean;
+    detected_objects: DetectedObject[];
+    detected_faces: DetectedFace[];
 }
 
 export interface TimelineGroup {
@@ -43,6 +67,8 @@ export interface PersonGroup {
     photo_count: number;
     cover_path: string | null;
     thumbnail: string | null;
+    conf: number | null;
+    face_bbox: BboxInfo | null;
 }
 
 export interface DuplicateItem {
@@ -80,83 +106,77 @@ export interface AppStatus {
 // ─── API ─────────────────────────────────────────────────────────────────────
 
 export const AuraSeekApi = {
-    /** Initialize AI engine and DB. Must be called first. */
     async init(): Promise<string> {
         return invoke<string>("cmd_init");
     },
 
-    /** Get engine + DB status */
     async getStatus(): Promise<AppStatus> {
         return invoke<AppStatus>("cmd_get_status");
     },
 
-    /** Scan a folder for images/videos */
     async scanFolder(sourcePath: string): Promise<IngestSummary> {
         return invoke<IngestSummary>("cmd_scan_folder", { sourcePath });
     },
 
-    /** Text search */
     async searchText(query: string, filters?: SearchFilters): Promise<SearchResult[]> {
         return invoke<SearchResult[]>("cmd_search_text", { query, filters });
     },
 
-    /** Image search (by file path) */
     async searchImage(imagePath: string, filters?: SearchFilters): Promise<SearchResult[]> {
         return invoke<SearchResult[]>("cmd_search_image", { imagePath, filters });
     },
 
-    /** Combined text + image search */
     async searchCombined(text: string, imagePath: string, filters?: SearchFilters): Promise<SearchResult[]> {
         return invoke<SearchResult[]>("cmd_search_combined", { text, imagePath, filters });
     },
 
-    /** Search by COCO object class */
-    async searchObject(className: string): Promise<SearchResult[]> {
-        return invoke<SearchResult[]>("cmd_search_object", { className });
+    async searchObject(className: string, filters?: SearchFilters): Promise<SearchResult[]> {
+        return invoke<SearchResult[]>("cmd_search_object", { className, filters });
     },
 
-    /** Search by person name */
-    async searchFace(name: string): Promise<SearchResult[]> {
-        return invoke<SearchResult[]>("cmd_search_face", { name });
+    async searchFace(name: string, filters?: SearchFilters): Promise<SearchResult[]> {
+        return invoke<SearchResult[]>("cmd_search_face", { name, filters });
     },
 
-    /** Get timeline grouped by month */
+    async searchFilterOnly(filters?: SearchFilters): Promise<SearchResult[]> {
+        return invoke<SearchResult[]>("cmd_search_filter_only", { filters });
+    },
+
     async getTimeline(limit?: number): Promise<TimelineGroup[]> {
         return invoke<TimelineGroup[]>("cmd_get_timeline", { limit });
     },
 
-    /** Get all recognized people */
     async getPeople(): Promise<PersonGroup[]> {
         return invoke<PersonGroup[]>("cmd_get_people");
     },
 
-    /** Name a face cluster */
     async namePerson(faceId: string, name: string): Promise<void> {
         return invoke<void>("cmd_name_person", { faceId, name });
     },
 
-    /** Get duplicate image groups */
     async getDuplicates(): Promise<DuplicateGroup[]> {
         return invoke<DuplicateGroup[]>("cmd_get_duplicates");
     },
 
-    /** Get recent search history */
     async getSearchHistory(limit?: number): Promise<any[]> {
         return invoke<any[]>("cmd_get_search_history", { limit });
     },
 
-    /** Set MongoDB URI */
-    async setMongoUri(uri: string): Promise<void> {
-        return invoke<void>("cmd_set_mongo_uri", { uri });
+    async toggleFavorite(mediaId: string): Promise<boolean> {
+        return invoke<boolean>("cmd_toggle_favorite", { mediaId });
+    },
+
+    async getDistinctObjects(): Promise<string[]> {
+        return invoke<string[]>("cmd_get_distinct_objects");
+    },
+
+    async setDbConfig(addr: string, user: string, pass: string): Promise<void> {
+        return invoke<void>("cmd_set_db_config", { addr, user, pass });
     },
 };
 
-/** Convert a local file path to a displayable URL in Tauri.
- *  Uses the asset:// protocol to serve local files. */
 export function localFileUrl(filePath: string): string {
     if (!filePath) return "";
-    // Tauri v2 can serve local files via the asset protocol
-    // Encode the path for use in a URL
     const encoded = encodeURIComponent(filePath).replace(/%2F/g, "/").replace(/%5C/g, "/");
     return `asset://localhost/${encoded}`;
 }

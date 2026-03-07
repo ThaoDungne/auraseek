@@ -1,7 +1,7 @@
-/// Text-to-embedding search
+/// Text-to-embedding search – SurrealDB edition
 use anyhow::Result;
 use crate::processor::AuraSeekEngine;
-use crate::db::VectorStore;
+use crate::db::{SurrealDb, DbOperations};
 
 pub fn encode_text_query(
     engine: &mut AuraSeekEngine,
@@ -14,11 +14,11 @@ pub fn encode_text_query(
     engine.aura.encode_text(input_ids, attention_mask, seq_len)
 }
 
-pub fn search_by_text_embedding(
-    vector_store: &VectorStore,
+pub async fn search_by_text_embedding(
+    db: &SurrealDb,
     embedding: &[f32],
     threshold: f32,
     limit: usize,
-) -> Vec<(mongodb::bson::oid::ObjectId, f32)> {
-    vector_store.search(embedding, threshold, limit)
+) -> Result<Vec<(String, f32)>> {
+    DbOperations::vector_search(db, embedding, threshold, limit).await
 }

@@ -1,37 +1,35 @@
-/// Image folder ingest pipeline.
+/// Image folder ingest pipeline – SurrealDB edition
 /// Thread 1: scan files → insert media stubs (with sha256 dedup)
 /// Thread 2: AI processing queue → update with objects/faces/embedding
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
-use mongodb::bson::DateTime as BsonDateTime;
 use sha2::{Sha256, Digest};
 
-use crate::db::{MongoDb, models::{MediaDoc, FileInfo, MediaMetadata, ObjectEntry, FaceEntry, Bbox}, DbOperations};
-use crate::db::vector_store::{VectorStore, VectorEntry};
+use crate::db::{SurrealDb, DbOperations};
+use crate::db::models::{MediaDoc, FileInfo, MediaMetadata, ObjectEntry, FaceEntry, Bbox, PersonDoc};
 use crate::processor::AuraSeekEngine;
 
 const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "bmp", "webp", "tiff", "tif", "heic", "avif"];
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mov", "avi", "mkv", "webm", "m4v", "flv", "wmv"];
 
 /// Scan a source folder and ingest all images/videos.
-/// Returns (total_found, newly_added, skipped_duplicates, errors).
 pub async fn ingest_folder(
     source_dir: String,
-    db: Arc<MongoDb>,
+    db: Arc<Mutex<Option<SurrealDb>>>,
     engine: Arc<Mutex<Option<AuraSeekEngine>>>,
-    vector_store: Arc<VectorStore>,
     progress_tx: Option<tauri::ipc::Channel<IngestProgress>>,
 ) -> Result<IngestSummary> {
     let source_path = Path::new(&source_dir);
     if !source_path.exists() {
+        crate::log_error!("Source directory not found: {}", source_dir);
         return Err(anyhow::anyhow!("Source directory not found: {}", source_dir));
     }
 
-    // Collect all files
-    let (image_files, video_files) = collect_files(source_path);
-    let total = image_files.len() + video_files.len();
+    let (image_files, _video_files) = collect_files(source_path);
+    let total = image_files.len();
+    crate::log_info!("📂 Ingest started: {} | {} images found", source_dir, total);
 
     let mut summary = IngestSummary {
         total_found: total,
@@ -40,14 +38,12 @@ pub async fn ingest_folder(
         errors: 0,
     };
 
-    // ── Thread 1 + 2: scan images ─────────────────────────────────────────────
-    let (tx, mut rx) = mpsc::channel::<(PathBuf, ObjectId)>(64);
+    let (tx, mut rx) = mpsc::channel::<(PathBuf, String)>(64);
 
-    // Clone for the scan task
     let db_scan = db.clone();
     let source_dir_clone = source_dir.clone();
 
-    // Spawn scan task (Thread 1): file scan + insert media stubs
+    // Thread 1: file scan + insert media stubs
     let scan_task = tokio::spawn(async move {
         let mut newly_added = 0usize;
         let mut skipped = 0usize;
@@ -60,9 +56,9 @@ pub async fn ingest_folder(
                     let _ = tx.send((path, media_id)).await;
                 }
                 Ok(None) => { skipped += 1; }
-                Err(e) => { 
-                    eprintln!("[AuraSeek] Lỗi khi quét ảnh {:?}: {}", path, e);
-                    errors += 1; 
+                Err(e) => {
+                    crate::log_warn!("⚠️ Scan error {:?}: {}", path, e);
+                    errors += 1;
                 }
             }
         }
@@ -78,10 +74,9 @@ pub async fn ingest_folder(
             Some(e) => e,
             None => { drop(eng_guard); continue; }
         };
-        
+
         match eng.process_image(&path_str) {
             Ok(output) => {
-                // Convert objects
                 let objects: Vec<ObjectEntry> = output.objects.iter().map(|o| ObjectEntry {
                     class_name: o.class_name.clone(),
                     conf: o.conf,
@@ -90,11 +85,10 @@ pub async fn ingest_folder(
                         w: o.bbox[2] - o.bbox[0],
                         h: o.bbox[3] - o.bbox[1],
                     },
-                    mask_area: o.mask_area,
+                    mask_area: Some(o.mask_area),
                     mask_path: None,
                 }).collect();
 
-                // Convert faces
                 let faces: Vec<FaceEntry> = output.faces.iter().map(|f| FaceEntry {
                     face_id: f.face_id.clone(),
                     name: f.name.clone(),
@@ -106,34 +100,54 @@ pub async fn ingest_folder(
                     },
                 }).collect();
 
-                drop(eng_guard); // Release lock before DB calls
+                let detected_faces: Vec<(String, f32, Bbox)> = faces.iter().map(|f| (
+                    f.face_id.clone(),
+                    f.conf,
+                    Bbox { x: f.bbox.x, y: f.bbox.y, w: f.bbox.w, h: f.bbox.h },
+                )).collect();
 
-                // Update media doc with AI results
-                let _ = DbOperations::update_media_ai(&db, media_id, objects, faces).await;
+                drop(eng_guard);
 
-                // Save embedding and add to vector store
-                if !output.vision_embedding.is_empty() {
-                    let emb = output.vision_embedding.clone();
-                    let _ = DbOperations::upsert_embedding(
-                        &db, media_id, "image", None, None, emb.clone()
-                    ).await;
-                    vector_store.add(VectorEntry {
-                        media_id,
-                        source: "image".to_string(),
-                        embedding: emb,
-                    });
+                // Update AI results in DB
+                {
+                    let db_guard = db.lock().await;
+                    if let Some(ref sdb) = *db_guard {
+                        if let Err(e) = DbOperations::update_media_ai(sdb, &media_id, objects, faces).await {
+                            crate::log_warn!("⚠️ update_media_ai failed for {}: {}", media_id, e);
+                        }
+
+                        if !output.vision_embedding.is_empty() {
+                            if let Err(e) = DbOperations::insert_embedding(
+                                sdb, &media_id, "image", None, None, output.vision_embedding.clone()
+                            ).await {
+                                crate::log_warn!("⚠️ insert_embedding failed for {}: {}", media_id, e);
+                            }
+                        }
+
+                        for (fid, conf, bbox) in &detected_faces {
+                            if let Err(e) = DbOperations::upsert_person(sdb, PersonDoc {
+                                face_id: fid.clone(),
+                                name: None,
+                                thumbnail: Some(path_str.clone()),
+                                conf: Some(*conf),
+                                face_bbox: Some(bbox.clone()),
+                            }).await {
+                                crate::log_warn!("⚠️ upsert_person failed for {}: {}", fid, e);
+                            }
+                        }
+                    }
                 }
 
                 ai_processed += 1;
             }
             Err(e) => {
                 drop(eng_guard);
-                eprintln!("AI error for {}: {}", path_str, e);
+                crate::log_warn!("🤖 AI error for {}: {}", path_str, e);
             }
         }
 
-        if let Some(ref tx) = progress_tx {
-            let _ = tx.send(IngestProgress {
+        if let Some(ref ptx) = progress_tx {
+            let _ = ptx.send(IngestProgress {
                 processed: ai_processed,
                 total,
                 current_file: path.file_name()
@@ -149,46 +163,27 @@ pub async fn ingest_folder(
     summary.skipped_dup = skipped;
     summary.errors = errors;
 
-    // Process videos
-    for video_path in &video_files {
-        let path_str = video_path.to_string_lossy().to_string();
-        match scan_single_file(video_path, &db, &source_dir, "video").await {
-            Ok(Some(media_id)) => {
-                summary.newly_added += 1;
-                // Video processing in background (scene extraction)
-                let db2 = db.clone();
-                let vs2 = vector_store.clone();
-                let eng2 = engine.clone();
-                tokio::spawn(async move {
-                    let _ = crate::ingest::video_ingest::process_video_scenes(
-                        &path_str, media_id, &db2, &eng2, &vs2
-                    ).await;
-                });
-            }
-            Ok(None) => {
-                summary.skipped_dup += 1;
-            }
-            Err(e) => {
-                eprintln!("[AuraSeek] Lỗi khi quét video {:?}: {}", video_path, e);
-                summary.errors += 1;
-            }
-        }
-    }
+    crate::log_info!("✅ Ingest complete: {} new, {} skipped, {} errors, {} AI processed",
+        newly_added, skipped, errors, ai_processed);
 
     Ok(summary)
 }
 
 async fn scan_single_file(
     path: &Path,
-    db: &MongoDb,
+    db: &Arc<Mutex<Option<SurrealDb>>>,
     source_dir: &str,
     media_type: &str,
-) -> Result<Option<ObjectId>> {
+) -> Result<Option<String>> {
     let sha256 = compute_sha256(path)?;
 
     // Dedup check
-    if DbOperations::is_duplicate_sha256(db, &sha256).await? {
-        return Ok(None);
+    {
+        let db_guard = db.lock().await;
+        let sdb = db_guard.as_ref().ok_or_else(|| anyhow::anyhow!("DB not connected"))?;
+        if DbOperations::is_duplicate_sha256(sdb, &sha256).await? {
+            return Ok(None);
+        }
     }
 
     let meta = std::fs::metadata(path)?;
@@ -197,23 +192,19 @@ async fn scan_single_file(
         .and_then(|n| n.to_str())
         .unwrap_or("")
         .to_string();
-    
     let path_str = path.to_string_lossy().to_string();
 
-    // Get image dimensions
     let (width, height) = if media_type == "image" {
         get_image_dimensions(&path_str)
     } else {
         (None, None)
     };
 
-    // File modification time
     let modified_at = meta.modified().ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| BsonDateTime::from_millis(d.as_millis() as i64));
+        .and_then(|d| surrealdb::types::Datetime::from_timestamp(d.as_secs() as i64, 0));
 
     let doc = MediaDoc {
-        id: None,
         media_type: media_type.to_string(),
         source: source_dir.to_string(),
         file: FileInfo {
@@ -228,7 +219,7 @@ async fn scan_single_file(
             height,
             duration: None,
             fps: None,
-            created_at: modified_at,
+            created_at: modified_at.clone(),
             modified_at,
         },
         objects: vec![],
@@ -236,7 +227,9 @@ async fn scan_single_file(
         processed: false,
     };
 
-    let media_id = DbOperations::insert_media(db, doc).await?;
+    let db_guard = db.lock().await;
+    let sdb = db_guard.as_ref().ok_or_else(|| anyhow::anyhow!("DB not connected"))?;
+    let media_id = DbOperations::insert_media(sdb, doc).await?;
     Ok(Some(media_id))
 }
 
@@ -286,8 +279,6 @@ fn get_image_dimensions(path: &str) -> (Option<u32>, Option<u32>) {
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-use mongodb::bson::oid::ObjectId;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct IngestProgress {

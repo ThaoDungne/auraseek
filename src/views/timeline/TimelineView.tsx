@@ -2,17 +2,15 @@ import { useMemo, useState } from "react";
 import type { Photo } from "@/types/photo.type";
 import type { TimelineGroup } from "@/lib/api";
 import { PhotoGrid } from "@/components/photos/PhotoGrid";
-import { GlassCard } from "@/components/common/GlassCard";
 import { FullScreenViewer } from "@/components/photo-detail/FullScreenViewer";
 import { localFileUrl } from "@/lib/api";
 
 interface TimelineViewProps {
-  /** Structured timeline from MongoDB (preferred) */
   timelineGroups?: TimelineGroup[];
-  /** Legacy flat photos array (fallback) */
   photos?: Photo[];
   searchQuery?: string;
   isLoading?: boolean;
+  selectionMode?: boolean;
 }
 
 
@@ -21,6 +19,7 @@ export function TimelineView({
   photos = [],
   searchQuery = "",
   isLoading = false,
+  selectionMode = false,
 }: TimelineViewProps) {
   const [selectedPhoto, setSelectedPhoto] = useState<Photo | null>(null);
 
@@ -124,12 +123,11 @@ export function TimelineView({
                 <span className="ml-2 opacity-60">· {section.photos.length} ảnh</span>
               </div>
 
-              <GlassCard className="bg-slate-900/40 p-3 sm:p-4">
-                <PhotoGrid
-                  photos={section.photos}
-                  onPhotoClick={(photo) => setSelectedPhoto(photo)}
-                />
-              </GlassCard>
+              <PhotoGrid
+                photos={section.photos}
+                onPhotoClick={(photo) => setSelectedPhoto(photo)}
+                selectionMode={selectionMode}
+              />
             </section>
           ))}
         </div>

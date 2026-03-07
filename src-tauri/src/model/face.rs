@@ -9,10 +9,10 @@ use opencv::{
 use crate::processor::vision::face_image::FaceDb;
 use crate::log_info;
 
-const SCORE_THRESHOLD: f32 = 0.6; 
+const SCORE_THRESHOLD: f32 = 0.95; 
 const NMS_THRESHOLD: f32 = 0.3;
 const TOP_K: i32 = 5000;
-const COSINE_THRESHOLD: f32 = 0.36;
+const COSINE_THRESHOLD: f32 = 0.2;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct FaceGroup {
@@ -65,19 +65,21 @@ impl FaceModel {
         })
     }
 
-    pub fn detect_from_path(&mut self, path: &str, db: &FaceDb) -> Result<Vec<FaceGroup>> {
-        let frame = imread(path, IMREAD_COLOR)?;
+    /// Detect faces from an already-loaded Mat (e.g. a person crop).
+    /// Returns FaceGroups with bbox in the coordinate space of the input frame.
+    pub fn detect_from_mat(&mut self, frame: &Mat, db: &FaceDb) -> Result<Vec<FaceGroup>> {
         if frame.empty() { return Ok(vec![]); }
         
         let max_dim = 640.0;
         let size = frame.size()?;
         let (w, h) = (size.width as f32, size.height as f32);
+        if w < 20.0 || h < 20.0 { return Ok(vec![]); }
         let scale = if w > h { max_dim / w } else { max_dim / h }.min(1.0);
         
-        let new_w = ((w * scale) as i32 / 32) * 32;
-        let new_h = ((h * scale) as i32 / 32) * 32;
+        let new_w = (((w * scale) as i32) / 32 * 32).max(32);
+        let new_h = (((h * scale) as i32) / 32 * 32).max(32);
         let mut resized = Mat::default();
-        opencv::imgproc::resize(&frame, &mut resized, Size::new(new_w, new_h), 0.0, 0.0, opencv::imgproc::INTER_LINEAR)?;
+        opencv::imgproc::resize(frame, &mut resized, Size::new(new_w, new_h), 0.0, 0.0, opencv::imgproc::INTER_LINEAR)?;
 
         if resized.size()? != self.detector_size {
             self.detector_size = resized.size()?;
@@ -158,6 +160,12 @@ impl FaceModel {
             });
         }
         Ok(groups)
+    }
+
+    /// Convenience: load image from path and detect faces on the full image.
+    pub fn detect_from_path(&mut self, path: &str, db: &FaceDb) -> Result<Vec<FaceGroup>> {
+        let frame = imread(path, IMREAD_COLOR)?;
+        self.detect_from_mat(&frame, db)
     }
 
     pub fn extract_feature_for_db(&mut self, img_path: &str) -> Result<Vec<Vec<f32>>> {

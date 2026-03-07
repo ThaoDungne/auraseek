@@ -1,110 +1,208 @@
 # AuraSeek
 
-AuraSeek is an AI-powered image search and processing engine built with Rust, ONNX Runtime, and Tauri. It provides high-performance capabilities for semantic search, object detection, and face recognition.
+AI-powered photo and video search engine built with Tauri, React, and Rust. Combines vision-language embeddings, object detection, face recognition, and vector search to enable semantic media retrieval on the desktop.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Frontend (React + TypeScript + Tailwind/shadcn)    │
+│  Timeline · People · Albums · Search · Filters      │
+├─────────────────────────────────────────────────────┤
+│  Tauri IPC (invoke commands)                        │
+├─────────────────────────────────────────────────────┤
+│  Backend (Rust)                                     │
+│  ┌──────────┐ ┌──────────┐ ┌──────────────────────┐│
+│  │ AI Engine│ │ Search   │ │ Ingest Pipeline      ││
+│  │ Aura     │ │ Text     │ │ Scan → Dedup → AI    ││
+│  │ YOLO     │ │ Image    │ │ → Store embeddings   ││
+│  │ YuNet    │ │ Combined │ │ → Detect faces/objs  ││
+│  │ SFace    │ │ Filters  │ │ → Cluster faces      ││
+│  └──────────┘ └──────────┘ └──────────────────────┘│
+├─────────────────────────────────────────────────────┤
+│  SurrealDB (media, embeddings, persons, history)    │
+└─────────────────────────────────────────────────────┘
+```
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Desktop Shell | Tauri 2 |
+| Frontend | React 19, TypeScript, Vite 7, Tailwind CSS 4, shadcn/ui |
+| Backend | Rust (tokio, serde, chrono, uuid) |
+| AI Runtime | ONNX Runtime (ort 2.0) |
+| Computer Vision | OpenCV 0.92 |
+| Database | SurrealDB 3.0 (WebSocket) |
+| Image Processing | image, imageproc, sha2 |
+
+## AI Models
+
+| Model | File | Purpose |
+|-------|------|---------|
+| Aura Vision Tower | `vision_tower_aura.onnx` | Image → embedding vector |
+| Aura Text Tower | `text_tower_aura.onnx` | Text → embedding vector (PhoBERT tokenizer) |
+| YOLOv8-Seg | `yolo26n-seg.onnx` | Object detection + instance segmentation (80 COCO classes) |
+| YuNet | `face_detection_yunet_2022mar.onnx` | Face detection with bounding boxes |
+| SFace | `face_recognition_sface_2021dec.onnx` | Face embedding for recognition/clustering |
+
+Models are downloaded automatically from GitHub releases during `cargo build`.
 
 ## Features
 
-- **Semantic Search**: Text-to-Image and Image-to-Image similarity calculation using Aura Model.
-- **Object Detection & Segmentation**: Integrated YOLO26 for accurate object identification and masking.
-- **Face Detection & Recognition**: Automated face detection and identification with a persistent face database.
-- **High Performance**: Leverages ONNX Runtime with multiple execution providers and optimized CPU paths.
-- **Automated Setup**: Automatic downloading of pre-trained models on first build.
+### Media Management
+- **Folder scanning** with SHA-256 deduplication
+- **Timeline view** grouped by year/month
+- **Favorites** with persistent toggle
+- **Duplicate detection** by file hash
+- **Albums** auto-generated from detected object tags
 
----
+### AI-Powered Search
+- **Text search** — natural language queries encoded via PhoBERT + Aura text tower
+- **Image search** — query by image, encoded via Aura vision tower
+- **Combined search** — text + image with averaged similarity scores
+- **Object filter** — filter by COCO class (person, dog, car, etc.)
+- **Face filter** — filter by recognized person
+- **Advanced filters** — year, month, media type, combinable with any search mode
+- **Vector similarity** — cosine similarity on SurrealDB-stored embeddings
 
-## Technical Specifications
+### Face Recognition
+- **Detection pipeline**: YOLO person bbox → crop → YuNet face detection → SFace embedding
+- **Clustering**: cosine similarity matching (threshold 0.55) across sessions
+- **Person management**: auto-numbered groups, user-renamable
+- **Cropped avatars**: face bbox stored per person, used for circular avatar crops in People view
+- **Confidence scores**: stored per person, highest-confidence detection kept as representative
 
-### Supported Models
-- **Aura Model**: Developed by **AI Enthusiasm**, based on VinAI's `phobert-base-v2` and FacebookResearch's `dinov3_vits16`.
-- **Object Detection**: `YOLO26n-seg` developed by **Ultralytics**, for real-time segmentation and detection.
-- **Face Detection**: `YuNet` (2022 Mar) for fast and accurate face localization.
-- **Face Recognition**: `SFace` (2021 Dec) for high-precision face identification.
+### Object Detection
+- **80 COCO classes** detected per image with confidence scores
+- **Bounding boxes** stored per object/face in the `media` table
+- **Hover overlays** — bbox rectangles rendered on photo hover (cyan for objects, violet for faces)
+- **Distinct object list** loaded from DB for filter panel
 
-### Supported Execution Providers
-The engine automatically detects and prioritizes the best available hardware accelerator:
-- **TensorRT**: Optimized for NVIDIA GPUs (Linux/Windows).
-- **CUDA**: Standard NVIDIA GPU acceleration.
-- **CoreML**: Hardware acceleration for Apple Silicon (macOS).
-- **DirectML**: Optimized for Windows-based GPUs (AMD/Intel/NVIDIA).
-- **OpenVINO**: Optimized for Intel CPUs and GPUs.
-- **CPU**: Reliable fallback for all platforms.
+### UI/UX
+- **Vietnamese IME support** — uncontrolled input with composition event handling (Telex, VNI, etc.)
+- **Dark/light theme** toggle
+- **Selection mode** for batch operations
+- **Responsive grid** layouts with dynamic column count
+- **Full-screen photo viewer**
+- **Search history** persisted in SurrealDB
+- **Filter panel** with live data from DB (detected objects + recognized persons)
+- **Empty state messaging** when filters return no results
 
-### Supported Operating Systems
-- **Linux** (Ubuntu/Debian/Arch/etc.)
-- **Windows** (10/11)
-- **macOS** (Intel & Apple Silicon)
+## Database Schema
 
----
+```sql
+-- Media: photos/videos with AI annotations
+media (SCHEMAFULL)
+  ├── media_type, source
+  ├── file { path, name, size, sha256, phash }
+  ├── metadata { width, height, duration, fps, created_at, modified_at }
+  ├── objects[] { class_name, conf, bbox { x, y, w, h }, mask_area, mask_path }
+  ├── faces[] { face_id, name, conf, bbox { x, y, w, h } }
+  ├── processed, favorite
 
-## Engine Usage
+-- Embedding: vector storage for similarity search
+embedding (SCHEMAFULL)
+  ├── media_id → record<media>
+  ├── source, frame_ts, frame_idx
+  ├── vec: array<float>
 
-The `AuraSeekEngine` provides several ways to interact with the models. Below are examples of common use cases.
+-- Person: face cluster registry
+person (SCHEMAFULL)
+  ├── face_id (UNIQUE), name, thumbnail
+  ├── conf, face_bbox { x, y, w, h }
 
-### 1. Batch Processing
-Process an entire directory of images to generate embeddings, detect objects, and recognize faces.
-
-```rust
-    // example 1: using engine
-    let mut engine = AuraSeekEngine::new_default()?;
-    engine.run_dir("input", "output")?;
+-- Search history
+search_history (SCHEMAFULL)
+  ├── query, image_path, filters
 ```
 
-### 2. Text-to-Image Similarity
-Calculate how well a text description matches an image.
+## Project Structure
 
-```rust
-    // example 2: text to image
-    let text = "con mèo nằm trên laptop";
-    let (input_ids, attention_mask) = engine.text_proc.encode(text, 64);
-    let text_emb = engine.aura.encode_text(input_ids, attention_mask, 64)?;
-
-    let image_path_1 = "input/cat-1.jpg";
-    let image_blob_1 = preprocess_aura(image_path_1)?;
-    let image_emb_1 = engine.aura.encode_image(image_blob_1, 256, 256)?;
-    let similarity = AuraModel::cosine_similarity(&text_emb, &image_emb_1);
-
-    println!("similarity text to image: {:?}", similarity);
+```
+auraseek/
+├── src/                        # React frontend
+│   ├── views/                  # Page-level components
+│   │   ├── timeline/           #   Photo timeline
+│   │   ├── people/             #   Face groups
+│   │   ├── search/             #   Search results
+│   │   ├── gallery/            #   Filtered gallery
+│   │   ├── albums/             #   Auto-generated albums
+│   │   └── duplicates/         #   Duplicate finder
+│   ├── components/
+│   │   ├── layout/             #   Sidebar, Topbar
+│   │   ├── photos/             #   PhotoCard, PhotoGrid
+│   │   ├── common/             #   FilterPanel, Settings
+│   │   └── ui/                 #   shadcn primitives
+│   ├── lib/api.ts              # Tauri command bindings
+│   └── types/photo.type.ts     # Frontend type definitions
+│
+├── src-tauri/                  # Rust backend
+│   ├── src/
+│   │   ├── main.rs             # Tauri commands + app state
+│   │   ├── model/              # AI model wrappers
+│   │   │   ├── aura.rs         #   Vision/text embeddings
+│   │   │   ├── yolo.rs         #   Object detection
+│   │   │   └── face.rs         #   Face detect + recognize
+│   │   ├── processor/          # AI orchestration engine
+│   │   ├── db/                 # SurrealDB layer
+│   │   │   ├── surreal.rs      #   Connection + schema
+│   │   │   ├── models.rs       #   Rust structs
+│   │   │   └── operations.rs   #   Queries + filters
+│   │   ├── search/             # Search pipeline
+│   │   └── ingest/             # File scanning + processing
+│   ├── assets/models/          # ONNX model files
+│   └── Cargo.toml
+│
+├── vite.config.ts
+├── package.json
+└── tsconfig.json
 ```
 
-### 3. Image-to-Image Similarity
-Compare two images to find visual similarity.
+## Getting Started
 
-```rust
-    // example 3: image to image
-    let image_path_2 = "input/cat-2.jpg";
-    let image_blob_2 = preprocess_aura(image_path_2)?;
-    let image_emb_2 = engine.aura.encode_image(image_blob_2, 256, 256)?;
+### Prerequisites
 
-    let image_path_3 = "input/cat-3.jpg";
-    let image_blob_3 = preprocess_aura(image_path_3)?;
-    let image_emb_3 = engine.aura.encode_image(image_blob_3, 256, 256)?;
-    let similarity = AuraModel::cosine_similarity(&image_emb_2, &image_emb_3);
+- [Rust](https://rustup.rs/) (stable)
+- [Node.js](https://nodejs.org/) (v18+)
+- [SurrealDB](https://surrealdb.com/install) (v2+)
+- OpenCV 4.x system libraries
+- ONNX Runtime (bundled via `ort` crate)
 
-    println!("similarity image to image: {:?}", similarity);
-```
+### Setup
 
----
-
-## Setup & Development
-
-### Automated Model Download
-The project uses a `build.rs` script that automatically downloads all required models and assets from GitHub Releases if they are missing from the `assets/` directory.
-
-### Running the Project
-
-To run the backend engine in development mode (CLI testing):
 ```bash
-cd src-tauri
-cargo run
-```
+# Start SurrealDB
+surreal start --user root --pass root --bind 0.0.0.0:8000 surrealkv:auraseek_data
 
-To run the full Tauri application:
-```bash
+# Install frontend dependencies
+yarn install
+
+# Run in development mode (builds Rust + starts Vite dev server)
 yarn tauri dev
 ```
 
-## Dependencies
-- **Rust**: Main programming language.
-- **ONNX Runtime (`ort`)**: AI model inference.
-- **OpenCV**: Image handling and face detection preprocessing.
-- **Tauri**: Cross-platform GUI framework.
+### Build for Production
+
+```bash
+yarn tauri build
+```
+
+## Tauri Commands
+
+| Command | Description |
+|---------|------------|
+| `cmd_init` | Initialize AI engine + DB connection |
+| `cmd_scan_folder` | Scan directory, ingest media, run AI |
+| `cmd_search_text` | Semantic text search with filters |
+| `cmd_search_image` | Search by image similarity |
+| `cmd_search_combined` | Text + image search |
+| `cmd_search_object` | Filter by COCO object class |
+| `cmd_search_face` | Filter by person name |
+| `cmd_search_filter_only` | Year/month/type filter without search |
+| `cmd_get_timeline` | Get media grouped by date |
+| `cmd_get_people` | Get face clusters with counts |
+| `cmd_name_person` | Rename a face cluster |
+| `cmd_toggle_favorite` | Toggle media favorite status |
+| `cmd_get_distinct_objects` | List all detected object classes |
+| `cmd_get_duplicates` | Get duplicate file groups |

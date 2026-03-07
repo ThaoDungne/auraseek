@@ -1,7 +1,8 @@
-/// Image-to-embedding search
+/// Image-to-embedding search – SurrealDB edition
 use anyhow::Result;
-use crate::processor::{AuraSeekEngine, vision::preprocess_aura};
-use crate::db::VectorStore;
+use crate::processor::AuraSeekEngine;
+use crate::processor::vision::preprocess_aura;
+use crate::db::{SurrealDb, DbOperations};
 
 pub fn encode_image_query(
     engine: &mut AuraSeekEngine,
@@ -11,11 +12,11 @@ pub fn encode_image_query(
     engine.aura.encode_image(blob, 256, 256)
 }
 
-pub fn search_by_image_embedding(
-    vector_store: &VectorStore,
+pub async fn search_by_image_embedding(
+    db: &SurrealDb,
     embedding: &[f32],
     threshold: f32,
     limit: usize,
-) -> Vec<(mongodb::bson::oid::ObjectId, f32)> {
-    vector_store.search(embedding, threshold, limit)
+) -> Result<Vec<(String, f32)>> {
+    DbOperations::vector_search(db, embedding, threshold, limit).await
 }

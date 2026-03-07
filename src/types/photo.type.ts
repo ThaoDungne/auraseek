@@ -10,6 +10,26 @@ export type PhotoPersonRef = {
   name: string;
 };
 
+export type BboxInfo = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+};
+
+export type DetectedObject = {
+  class_name: string;
+  conf: number;
+  bbox: BboxInfo;
+};
+
+export type DetectedFace = {
+  face_id: string;
+  name: string | null;
+  conf: number;
+  bbox: BboxInfo;
+};
+
 export type Photo = {
   id: string;
   url: string;
@@ -29,6 +49,9 @@ export type Photo = {
   duplicateGroupId?: string;
   labels?: string[];
   faces?: string[];
+  faceIds?: string[];
+  detectedObjects?: DetectedObject[];
+  detectedFaces?: DetectedFace[];
   type?: "photo" | "video";
 };
 

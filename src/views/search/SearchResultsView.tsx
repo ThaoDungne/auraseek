@@ -91,8 +91,6 @@ function SearchResultCard({
     onClick: () => void;
 }) {
     const [imgError, setImgError] = useState(false);
-    const score = Math.round(result.similarity_score * 100);
-    const scoreColor = score >= 80 ? "bg-emerald-500" : score >= 60 ? "bg-amber-500" : "bg-slate-500";
 
     return (
         <div
@@ -117,11 +115,6 @@ function SearchResultCard({
             {/* Overlay on hover */}
             <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all duration-200" />
 
-            {/* Similarity Score Badge */}
-            <div className={`absolute top-2 left-2 ${scoreColor} text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shadow-sm`}>
-                {score}%
-            </div>
-
             {/* Video indicator */}
             {result.media_type === "video" && (
                 <div className="absolute bottom-2 right-2 bg-black/70 text-white text-[10px] px-1.5 py-0.5 rounded-full">
@@ -129,18 +122,7 @@ function SearchResultCard({
                 </div>
             )}
 
-            {/* Object tags on hover */}
-            {result.metadata.objects.length > 0 && (
-                <div className="absolute bottom-0 left-0 right-0 p-2 translate-y-full group-hover:translate-y-0 transition-transform duration-200">
-                    <div className="flex flex-wrap gap-1">
-                        {result.metadata.objects.slice(0, 3).map((obj) => (
-                            <span key={obj} className="bg-black/70 text-white text-[9px] px-1.5 py-0.5 rounded-full backdrop-blur">
-                                {obj}
-                            </span>
-                        ))}
-                    </div>
-                </div>
-            )}
+
         </div>
     );
 }

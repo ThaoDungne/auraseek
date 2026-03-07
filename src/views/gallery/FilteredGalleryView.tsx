@@ -26,7 +26,7 @@ export function FilteredGalleryView({ title, subtitle, filterType, filterPayload
                     const sevenDaysAgo = new Date();
                     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
                     return new Date(photo.takenAt) >= sevenDaysAgo;
-                case "person": return photo.faces?.includes(filterPayload || "");
+                case "person": return photo.faceIds?.includes(filterPayload || "") || photo.faces?.includes(filterPayload || "");
                 case "album":
                     if (filterPayload?.startsWith("tag_")) {
                         const tag = filterPayload.replace("tag_", "");
@@ -66,7 +66,7 @@ export function FilteredGalleryView({ title, subtitle, filterType, filterPayload
                 ) : (
                     <div className="mb-8">
                         <div className="text-sm font-medium mb-4 text-muted-foreground">{filteredPhotos.length} ảnh và video</div>
-                        <PhotoGrid photos={filteredPhotos} onPhotoClick={setSelectedPhoto} />
+                        <PhotoGrid photos={filteredPhotos} onPhotoClick={setSelectedPhoto} showBbox={filterType !== "person"} />
                     </div>
                 )}
             </div>

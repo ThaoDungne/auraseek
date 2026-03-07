@@ -29,7 +29,7 @@ const mainItems = [
 const collections = [
   { title: "Album", url: "#", icon: Library, key: "albums" },
   { title: "Ảnh yêu thích", url: "#", icon: Star, key: "favorites" },
-  { title: "Người và thú cưng", url: "#", icon: Users, key: "people" },
+  { title: "Người", url: "#", icon: Users, key: "people" },
 ];
 
 
