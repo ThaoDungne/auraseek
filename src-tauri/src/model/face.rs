@@ -16,10 +16,10 @@ const COSINE_THRESHOLD: f32 = 0.2;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct FaceGroup {
-    pub face_id:  String,
-    pub name:     Option<String>,
-    pub conf:     f32,
-    pub bbox:     [f32; 4],
+    pub face_id: String,
+    pub name:    Option<String>,
+    pub conf:    f32,
+    pub bbox:    [f32; 4],
     #[serde(skip)]
     pub embedding: Vec<f32>,
 }
