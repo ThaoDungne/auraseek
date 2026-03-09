@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "./components/layout/AppSidebar";
 import { AppTopbar } from "./components/layout/AppTopbar";
@@ -13,6 +14,7 @@ import { HiddenView } from "@/views/hidden/HiddenView";
 import { FilteredGalleryView } from "@/views/gallery/FilteredGalleryView";
 import { SearchResultsView } from "@/views/search/SearchResultsView";
 import { FirstRunModal } from "@/components/common/FirstRunModal";
+import ModelDownloadScreen, { type ModelDownloadEvent } from "@/components/common/ModelDownloadScreen";
 import { AuraSeekApi, localFileUrl, type SearchResult, type TimelineGroup, type PersonGroup, type SearchFilters as ApiFilters, type SyncStatus } from "@/lib/api";
 import type { Photo } from "@/types/photo.type";
 
@@ -34,6 +36,8 @@ function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchImagePath, setSearchImagePath] = useState<string | null>(null);
   const [activeFilters, setActiveFilters] = useState<ActiveFilters>({});
+  const [downloadProgress, setDownloadProgress] = useState<ModelDownloadEvent | null>(null);
+  const [needsDownload, setNeedsDownload] = useState(false);
 
   // Data state
   const [timelineGroups, setTimelineGroups] = useState<TimelineGroup[]>([]);
@@ -54,8 +58,8 @@ function App() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const syncPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ── Init ──────────────────────────────────────────────────────────
   useEffect(() => {
+    let unlisten: (() => void) | undefined;
     const initialize = async () => {
       console.log("[AuraSeek] 🚀 Initializing app...");
 
@@ -68,13 +72,45 @@ function App() {
       }
 
       try {
-        const initPromise = AuraSeekApi.init();
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("Init timeout: backend không phản hồi sau 15s. Kiểm tra SurrealDB server.")), 15000)
-        );
-        const msg = await Promise.race([initPromise, timeoutPromise]);
+        // 1. Check if model files are present
+        const modelsReady = await AuraSeekApi.checkModels();
+
+        if (!modelsReady) {
+          setNeedsDownload(true);
+          // Wait for download to complete via events
+          await new Promise<void>((resolve, reject) => {
+            let unlistenDownload: (() => void) | null = null;
+            listen<ModelDownloadEvent>("model-download-progress", (event) => {
+              setDownloadProgress(event.payload);
+              if (event.payload.done) {
+                unlistenDownload?.();
+                resolve();
+              }
+              if (event.payload.error) {
+                unlistenDownload?.();
+                reject(new Error(event.payload.error));
+              }
+            }).then((fn) => { unlistenDownload = fn; });
+
+            // Kick off the download
+            AuraSeekApi.downloadModels().catch(reject);
+          });
+          setNeedsDownload(false);
+          // Keep screen up while engine loads models into RAM
+          setDownloadProgress({
+            file: "", progress: 1.0,
+            message: "Đang khởi động AI Engine...",
+            done: false, error: "",
+            file_index: 0, file_total: 0,
+            bytes_done: 0, bytes_total: 0,
+          });
+        }
+
+        // 2. Normal initialization (engine + DB)
+        const msg = await AuraSeekApi.init();
         console.log("[AuraSeek] ✅ Engine + DB ready:", msg);
         setInitError(null);
+        setDownloadProgress(null); // hide loading screen now that engine is ready
 
         // Get source_dir from backend
         const dir = await AuraSeekApi.getSourceDir();
@@ -96,7 +132,10 @@ function App() {
       }
     };
     initialize();
-    return () => { if (syncPollRef.current) clearInterval(syncPollRef.current); };
+    return () => {
+      if (syncPollRef.current) clearInterval(syncPollRef.current);
+      if (unlisten) unlisten();
+    };
   }, []);
 
   const triggerAutoScan = useCallback(async () => {
@@ -116,7 +155,7 @@ function App() {
               window.dispatchEvent(new Event("refresh_photos"));
             }
           }
-        } catch {}
+        } catch { }
       }, 2000);
     } catch (e) {
       console.warn("[AuraSeek] ⚠️ Auto-scan failed:", e);
@@ -184,20 +223,20 @@ function App() {
   // ── Drag-drop / paste images into the app ─────────────────────────
   useEffect(() => {
     const ALLOWED_TYPES = [
-      "image/jpeg","image/jpg","image/png","image/bmp","image/webp",
-      "image/tiff","image/heic","image/avif",
-      "video/mp4","video/quicktime","video/x-msvideo","video/x-matroska",
-      "video/webm","video/x-m4v","video/x-flv","video/x-ms-wmv",
+      "image/jpeg", "image/jpg", "image/png", "image/bmp", "image/webp",
+      "image/tiff", "image/heic", "image/avif",
+      "video/mp4", "video/quicktime", "video/x-msvideo", "video/x-matroska",
+      "video/webm", "video/x-m4v", "video/x-flv", "video/x-ms-wmv",
     ];
     const ALLOWED_EXTS = [
-      "jpg","jpeg","png","bmp","webp","tiff","tif","heic","avif",
-      "mp4","mov","avi","mkv","webm","m4v","flv","wmv",
+      "jpg", "jpeg", "png", "bmp", "webp", "tiff", "tif", "heic", "avif",
+      "mp4", "mov", "avi", "mkv", "webm", "m4v", "flv", "wmv",
     ];
 
     /** Convert a File's MIME type to an extension string */
     const mimeToExt = (mime: string): string => {
       if (mime === "image/jpeg") return "jpg";
-      if (mime === "image/png")  return "png";
+      if (mime === "image/png") return "png";
       if (mime === "image/webp") return "webp";
       return mime.split("/")[1] ?? "jpg";
     };
@@ -214,13 +253,13 @@ function App() {
       );
       if (validFiles.length === 0) return;
 
-      const withPath: string[]  = [];
-      const withBlob: File[]    = [];
+      const withPath: string[] = [];
+      const withBlob: File[] = [];
 
       for (const f of validFiles) {
         const p = (f as any).path as string | undefined;
         if (p) withPath.push(p);
-        else   withBlob.push(f);
+        else withBlob.push(f);
       }
 
       let newCount = 0;
@@ -236,11 +275,11 @@ function App() {
       for (const f of withBlob) {
         console.log("[AuraSeek] 📋 Ingesting blob:", f.name || "(unnamed)", f.type);
         try {
-          const buf    = await f.arrayBuffer();
-          const bytes  = new Uint8Array(buf);
-          const b64    = btoa(String.fromCharCode(...bytes));
-          const ext    = mimeToExt(f.type);
-          const s      = await AuraSeekApi.ingestImageData(b64, ext);
+          const buf = await f.arrayBuffer();
+          const bytes = new Uint8Array(buf);
+          const b64 = btoa(String.fromCharCode(...bytes));
+          const ext = mimeToExt(f.type);
+          const s = await AuraSeekApi.ingestImageData(b64, ext);
           newCount += s.newly_added;
         } catch (e) { console.warn("[AuraSeek] ingestImageData failed:", e); }
       }
@@ -281,15 +320,15 @@ function App() {
       if (e.relatedTarget === null) setIsDragOver(false);
     };
 
-    document.addEventListener("drop",      handleDrop);
-    document.addEventListener("dragover",  handleDragOver);
+    document.addEventListener("drop", handleDrop);
+    document.addEventListener("dragover", handleDragOver);
     document.addEventListener("dragleave", handleDragLeave);
-    document.addEventListener("paste",     handlePaste);
+    document.addEventListener("paste", handlePaste);
     return () => {
-      document.removeEventListener("drop",      handleDrop);
-      document.removeEventListener("dragover",  handleDragOver);
+      document.removeEventListener("drop", handleDrop);
+      document.removeEventListener("dragover", handleDragOver);
       document.removeEventListener("dragleave", handleDragLeave);
-      document.removeEventListener("paste",     handlePaste);
+      document.removeEventListener("paste", handlePaste);
     };
   }, [loadTimeline]);
 
@@ -361,16 +400,16 @@ function App() {
   useEffect(() => {
     const handler = () => loadTimeline();
     window.addEventListener("refresh_photos", handler);
-    
+
     // Optimistic favorite handler for instant UI feedback
     const favoriteHandler = (e: any) => {
       const { id } = e.detail;
-      setPhotos(prev => prev.map(p => 
+      setPhotos(prev => prev.map(p =>
         p.id === id ? { ...p, favorite: !p.favorite } : p
       ));
       setTimelineGroups(prev => prev.map(group => ({
         ...group,
-        items: group.items.map(item => 
+        items: group.items.map(item =>
           item.media_id === id ? { ...item, favorite: !item.favorite } : item
         )
       })));
@@ -469,6 +508,11 @@ function App() {
                 <p className="text-sm text-muted-foreground mt-1">Ảnh sẽ được lưu vào thư mục nguồn và xử lý AI tự động</p>
               </div>
             </div>
+          )}
+
+          {/* Model download / first-run loading screen */}
+          {(needsDownload || (downloadProgress && !isInitialized)) && (
+            <ModelDownloadScreen event={downloadProgress} />
           )}
 
           <main className="flex flex-col flex-1 h-screen overflow-hidden">

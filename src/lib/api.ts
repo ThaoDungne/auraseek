@@ -121,6 +121,20 @@ export interface SyncStatus {
 // ─── API ─────────────────────────────────────────────────────────────────────
 
 export const AuraSeekApi = {
+    /** Returns true if all AI model files are present in the app data dir. */
+    async checkModels(): Promise<boolean> {
+        return invoke<boolean>("cmd_check_models");
+    },
+
+    /**
+     * Start downloading missing model files in the background.
+     * Progress is reported via `"model-download-progress"` events.
+     * Listen for `{ done: true }` before calling `init()`.
+     */
+    async downloadModels(): Promise<void> {
+        return invoke<void>("cmd_download_models");
+    },
+
     async init(): Promise<string> {
         return invoke<string>("cmd_init");
     },

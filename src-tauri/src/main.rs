@@ -5,6 +5,8 @@ mod db;
 mod ingest;
 mod search;
 mod debug_cli;
+mod surreal_sidecar;
+mod downloader;
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -37,77 +39,124 @@ impl Default for SyncStatus {
 // ─── App State ───────────────────────────────────────────────────────────────
 
 pub struct AppState {
-    pub engine:       Arc<Mutex<Option<AuraSeekEngine>>>,
-    pub db:           Arc<Mutex<Option<SurrealDb>>>,
-    pub surreal_addr: Mutex<String>,
-    pub surreal_user: Mutex<String>,
-    pub surreal_pass: Mutex<String>,
+    pub engine:        Arc<Mutex<Option<AuraSeekEngine>>>,
+    pub db:            Arc<Mutex<Option<SurrealDb>>>,
+    /// SurrealDB connection address – set by the sidecar launcher before any
+    /// command runs.  Uses `std::sync::Mutex` so it can be updated synchronously
+    /// from the Tauri `setup` callback (which is not async).
+    pub surreal_addr:  std::sync::Mutex<String>,
+    pub surreal_user:  std::sync::Mutex<String>,
+    pub surreal_pass:  std::sync::Mutex<String>,
     /// Loaded from config_auraseek on init; kept in memory to avoid repeated DB queries
-    pub source_dir:   Mutex<String>,
-    pub sync_status:  Arc<Mutex<SyncStatus>>,
+    pub source_dir:    Mutex<String>,
+    pub sync_status:   Arc<Mutex<SyncStatus>>,
+    /// Handle to the SurrealDB child process (None if we reused an external instance).
+    /// Killed when the last window closes.
+    pub surreal_child: std::sync::Mutex<Option<std::process::Child>>,
+    /// Base app data directory (set in setup callback).
+    /// Models: <data_dir>/models/   Tokenizer: <data_dir>/tokenizer/
+    /// SurrealDB:  <data_dir>/db/   Logs: <data_dir>/auraseek.log
+    pub data_dir:      std::sync::Mutex<std::path::PathBuf>,
 }
 
 impl AppState {
     fn new() -> Self {
         Self {
-            engine:       Arc::new(Mutex::new(None)),
-            db:           Arc::new(Mutex::new(None)),
-            surreal_addr: Mutex::new("127.0.0.1:8000".to_string()),
-            surreal_user: Mutex::new("root".to_string()),
-            surreal_pass: Mutex::new("root".to_string()),
-            source_dir:   Mutex::new(String::new()),
-            sync_status:  Arc::new(Mutex::new(SyncStatus::default())),
+            engine:        Arc::new(Mutex::new(None)),
+            db:            Arc::new(Mutex::new(None)),
+            surreal_addr:  std::sync::Mutex::new("127.0.0.1:8000".to_string()),
+            surreal_user:  std::sync::Mutex::new("root".to_string()),
+            surreal_pass:  std::sync::Mutex::new("root".to_string()),
+            source_dir:    Mutex::new(String::new()),
+            sync_status:   Arc::new(Mutex::new(SyncStatus::default())),
+            surreal_child: std::sync::Mutex::new(None),
+            data_dir:      std::sync::Mutex::new(std::path::PathBuf::from(".")),
         }
     }
 }
 
 // ─── RAM helper ──────────────────────────────────────────────────────────────
 
-/// Returns available RAM as a percentage of total (Linux: reads /proc/meminfo).
+/// Returns available RAM as a percentage of total.
+/// Uses the `sysinfo` crate — works on Linux, Windows, and macOS.
 fn available_ram_percent() -> f64 {
-    if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
-        let mut mem_total: u64 = 0;
-        let mut mem_avail: u64 = 0;
-        for line in content.lines() {
-            if line.starts_with("MemTotal:") {
-                mem_total = line.split_whitespace().nth(1).and_then(|v| v.parse().ok()).unwrap_or(0);
-            } else if line.starts_with("MemAvailable:") {
-                mem_avail = line.split_whitespace().nth(1).and_then(|v| v.parse().ok()).unwrap_or(0);
-            }
-        }
-        if mem_total > 0 {
-            return (mem_avail as f64 / mem_total as f64) * 100.0;
-        }
+    use sysinfo::System;
+    let mut sys = System::new_all();
+    sys.refresh_memory();
+    let total = sys.total_memory();
+    let avail = sys.available_memory();
+    if total > 0 {
+        (avail as f64 / total as f64) * 100.0
+    } else {
+        50.0 // assume OK if we can't read
     }
-    // macOS fallback or unknown: assume OK
-    50.0
 }
 
 // ─── Tauri Commands ──────────────────────────────────────────────────────────
 
+/// Check whether all required AI model files exist in the app data directory.
+/// The frontend calls this before `cmd_init` to decide whether to show the
+/// download screen.
+#[tauri::command]
+async fn cmd_check_models(state: State<'_, AppState>) -> Result<bool, String> {
+    let data_dir = state.data_dir.lock().unwrap().clone();
+    Ok(downloader::all_present(&data_dir))
+}
+
+/// Start downloading missing AI model assets in the background.
+/// Progress is reported via `"model-download-progress"` Tauri events.
+/// The frontend listens for the `done: true` event before calling `cmd_init`.
+#[tauri::command]
+async fn cmd_download_models(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let data_dir = state.data_dir.lock().unwrap().clone();
+    tokio::spawn(async move {
+        if let Err(e) = downloader::download_models_if_missing(&app, &data_dir).await {
+            crate::log_error!("❌ Model download failed: {:#}", e);
+            use tauri::Emitter;
+            let _ = app.emit("model-download-progress", downloader::DownloadProgress {
+                file: String::new(), progress: 0.0,
+                message: format!("Lỗi tải model: {}", e),
+                done: false, error: e.to_string(),
+                file_index: 0, file_total: 0,
+                bytes_done: 0, bytes_total: 0,
+            });
+        }
+    });
+    Ok(())
+}
+
 /// Initialize AI engine and SurrealDB connection, load source_dir from config.
+/// Assumes model files are already present (call cmd_download_models first if needed).
 #[tauri::command]
 async fn cmd_init(state: State<'_, AppState>) -> Result<String, String> {
-    // Init engine
+    let data_dir = state.data_dir.lock().unwrap().clone();
+
+    // Init engine – load models from the app data directory
     {
         let mut engine_guard = state.engine.lock().await;
         if engine_guard.is_none() {
-            crate::log_info!("🚀 Initializing AI engine...");
-            match AuraSeekEngine::new_default() {
+            crate::log_info!("🚀 Initializing AI engine from {}", data_dir.display());
+
+            let _ = std::fs::create_dir_all(data_dir.join("face_db"));
+            let config = processor::pipeline::EngineConfig::new_with_dir(&data_dir);
+            match AuraSeekEngine::new(config) {
                 Ok(e) => {
                     crate::log_info!("✅ AI engine ready");
                     *engine_guard = Some(e);
                 }
-                Err(e) => return Err(format!("Engine init failed: {}", e)),
+                Err(e) => return Err(format!("Engine init failed: {}. Download models first.", e)),
             }
         }
     }
 
     // Init DB
     {
-        let addr = state.surreal_addr.lock().await.clone();
-        let user = state.surreal_user.lock().await.clone();
-        let pass = state.surreal_pass.lock().await.clone();
+        let addr = state.surreal_addr.lock().unwrap().clone();
+        let user = state.surreal_user.lock().unwrap().clone();
+        let pass = state.surreal_pass.lock().unwrap().clone();
         let mut db_guard = state.db.lock().await;
         if db_guard.is_none() {
             match SurrealDb::connect(&addr, &user, &pass).await {
@@ -570,7 +619,7 @@ async fn cmd_get_search_history(
     Ok(serde_json::to_value(history).unwrap_or_default())
 }
 
-/// Set SurrealDB connection info.
+/// Set SurrealDB connection info (forces reconnect on next cmd_init call).
 #[tauri::command]
 async fn cmd_set_db_config(
     addr: String,
@@ -578,9 +627,9 @@ async fn cmd_set_db_config(
     pass: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    *state.surreal_addr.lock().await = addr;
-    *state.surreal_user.lock().await = user;
-    *state.surreal_pass.lock().await = pass;
+    *state.surreal_addr.lock().map_err(|e| e.to_string())? = addr;
+    *state.surreal_user.lock().map_err(|e| e.to_string())? = user;
+    *state.surreal_pass.lock().map_err(|e| e.to_string())? = pass;
     *state.db.lock().await = None;
     Ok(())
 }
@@ -655,6 +704,16 @@ async fn run_search(
     Ok(results)
 }
 
+// ─── Path helpers ────────────────────────────────────────────────────────────
+
+/// Return the current user's home directory.
+fn dirs_home() -> std::path::PathBuf {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -662,7 +721,70 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::new())
+        // ── Start SurrealDB sidecar before any command runs ──────────────────
+        .setup(|app| {
+            use tauri::Manager;
+
+            let resource_dir = app.path().resource_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+            // Base data directory for this app (platform-aware)
+            let base_data_dir = app.path().app_data_dir()
+                .unwrap_or_else(|_| {
+                    #[cfg(windows)]
+                    { std::path::PathBuf::from(std::env::var("APPDATA").unwrap_or_default()).join("auraseek") }
+                    #[cfg(not(windows))]
+                    { dirs_home().join(".local").join("share").join("auraseek") }
+                });
+
+            crate::log_info!("📁 App data dir: {}", base_data_dir.display());
+
+            let state = app.state::<AppState>();
+
+            // Store base data dir so cmd_init can locate model files
+            *state.data_dir.lock().unwrap() = base_data_dir.clone();
+
+            // SurrealDB uses a sub-directory so it doesn't conflict with model files
+            let surreal_data_dir = base_data_dir.join("db");
+
+            let user = state.surreal_user.lock().unwrap().clone();
+            let pass = state.surreal_pass.lock().unwrap().clone();
+
+            match surreal_sidecar::ensure_surreal(&resource_dir, &surreal_data_dir, &user, &pass) {
+                Ok((addr, child_opt)) => {
+                    crate::log_info!("🗄️  SurrealDB address: {}", addr);
+                    *state.surreal_addr.lock().unwrap() = addr;
+                    if let Some(child) = child_opt {
+                        *state.surreal_child.lock().unwrap() = Some(child);
+                    }
+                }
+                Err(e) => {
+                    crate::log_warn!("⚠️  SurrealDB sidecar failed: {}. Will try default 127.0.0.1:8000", e);
+                }
+            }
+
+            Ok(())
+        })
+        // ── Kill the SurrealDB child when the last window is destroyed ────────
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                use tauri::Manager;
+                let app = window.app_handle();
+                // Only terminate if no other windows remain
+                if app.webview_windows().is_empty() {
+                    let state = app.state::<AppState>();
+                    if let Ok(mut guard) = state.surreal_child.lock() {
+                        if let Some(mut child) = guard.take() {
+                            crate::log_info!("🛑 Terminating SurrealDB sidecar (pid={})...", child.id());
+                            let _ = child.kill();
+                        }
+                    }
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
+            cmd_check_models,
+            cmd_download_models,
             cmd_init,
             cmd_get_source_dir,
             cmd_set_source_dir,
@@ -700,7 +822,25 @@ pub fn run() {
 }
 
 fn main() -> Result<()> {
-    Logger::init("log/auraseek.log");
+    // Use an absolute log path so it works regardless of the working directory
+    // (AppImage launched from file manager, installed .deb, or cargo run).
+    // Log location: ~/.local/share/auraseek/auraseek.log  (Linux)
+    //               %APPDATA%\auraseek\auraseek.log        (Windows)
+    let log_path = {
+        #[cfg(windows)]
+        {
+            std::env::var("APPDATA")
+                .map(|p| format!("{}\\auraseek\\auraseek.log", p))
+                .unwrap_or_else(|_| "auraseek.log".to_string())
+        }
+        #[cfg(not(windows))]
+        {
+            std::env::var("HOME")
+                .map(|h| format!("{}/.local/share/auraseek/auraseek.log", h))
+                .unwrap_or_else(|_| "/tmp/auraseek.log".to_string())
+        }
+    };
+    Logger::init(&log_path);
 
     let run_cli_debug_ingest = false;
 
