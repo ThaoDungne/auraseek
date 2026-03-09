@@ -38,6 +38,26 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "externalBin": [
+      "binaries/surreal"
+    ],
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0",
+          "libsoup-3.0-0",
+          "libglib2.0-0",
+          "libgdk-pixbuf-2.0-0",
+          "libpango-1.0-0",
+          "libcairo2",
+          "libgcc-s1",
+          "libc6",
+          "ffmpeg",
+          "libopencv-dev"
+        ]
+      }
+    }
   }
 }

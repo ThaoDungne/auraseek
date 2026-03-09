@@ -21,25 +21,43 @@ pub struct EngineOutput {
     pub vision_embedding: Vec<f32>,
 }
 
-const DEFAULT_CONFIG: EngineConfig = EngineConfig {
-    vision_path:  "assets/models/vision_tower_aura.onnx",
-    text_path:    "assets/models/text_tower_aura.onnx",
-    yolo_path:    "assets/models/yolo26n-seg.onnx",
-    yunet_path:   "assets/models/face_detection_yunet_2022mar.onnx",
-    sface_path:   "assets/models/face_recognition_sface_2021dec.onnx",
-    vocab_path:   "assets/tokenizer/vocab.txt",
-    bpe_path:     "assets/tokenizer/bpe.codes",
-    face_db_path: "assets/face_db",
-};
+fn default_config() -> EngineConfig {
+    EngineConfig {
+        vision_path:  "assets/models/vision_tower_aura.onnx".into(),
+        text_path:    "assets/models/text_tower_aura.onnx".into(),
+        yolo_path:    "assets/models/yolo26n-seg.onnx".into(),
+        yunet_path:   "assets/models/face_detection_yunet_2022mar.onnx".into(),
+        sface_path:   "assets/models/face_recognition_sface_2021dec.onnx".into(),
+        vocab_path:   "assets/tokenizer/vocab.txt".into(),
+        bpe_path:     "assets/tokenizer/bpe.codes".into(),
+        face_db_path: "assets/face_db".into(),
+    }
+}
+
 pub struct EngineConfig {
-    pub vision_path: &'static str,
-    pub text_path: &'static str,
-    pub yolo_path: &'static str,
-    pub yunet_path: &'static str,
-    pub sface_path: &'static str,
-    pub vocab_path: &'static str,
-    pub bpe_path: &'static str,
-    pub face_db_path: &'static str,
+    pub vision_path: String,
+    pub text_path: String,
+    pub yolo_path: String,
+    pub yunet_path: String,
+    pub sface_path: String,
+    pub vocab_path: String,
+    pub bpe_path: String,
+    pub face_db_path: String,
+}
+
+impl EngineConfig {
+    pub fn new_with_dir(base: &std::path::Path) -> Self {
+        Self {
+            vision_path: base.join("models/vision_tower_aura.onnx").to_string_lossy().into_owned(),
+            text_path: base.join("models/text_tower_aura.onnx").to_string_lossy().into_owned(),
+            yolo_path: base.join("models/yolo26n-seg.onnx").to_string_lossy().into_owned(),
+            yunet_path: base.join("models/face_detection_yunet_2022mar.onnx").to_string_lossy().into_owned(),
+            sface_path: base.join("models/face_recognition_sface_2021dec.onnx").to_string_lossy().into_owned(),
+            vocab_path: base.join("tokenizer/vocab.txt").to_string_lossy().into_owned(),
+            bpe_path: base.join("tokenizer/bpe.codes").to_string_lossy().into_owned(),
+            face_db_path: base.join("face_db").to_string_lossy().into_owned(),
+        }
+    }
 }
 
 pub struct AuraSeekEngine {
@@ -54,16 +72,16 @@ pub struct AuraSeekEngine {
 
 impl AuraSeekEngine {
     pub fn new_default() -> Result<Self> {
-        Self::new(DEFAULT_CONFIG)
+        Self::new(default_config())
     }
 
     pub fn new(config: EngineConfig) -> Result<Self> {
         log_info!("loading ai models");
-        let aura = AuraModel::new(config.vision_path, config.text_path)?;
-        let text_proc = TextProcessor::new(config.vocab_path, config.bpe_path)?;
-        let yolo = YoloModel::new(config.yolo_path)?;
+        let aura = AuraModel::new(&config.vision_path, &config.text_path)?;
+        let text_proc = TextProcessor::new(&config.vocab_path, &config.bpe_path)?;
+        let yolo = YoloModel::new(&config.yolo_path)?;
         
-        let mut face = match FaceModel::new(config.yunet_path, config.sface_path) {
+        let mut face = match FaceModel::new(&config.yunet_path, &config.sface_path) {
             Ok(m) => Some(m),
             Err(e) => {
                 log_warn!("face model failed to load: {}", e);
@@ -72,7 +90,7 @@ impl AuraSeekEngine {
         };
 
         let face_db = if let Some(ref mut fm) = face {
-            FaceDb::build(config.face_db_path, fm).unwrap_or_else(|_| FaceDb::empty())
+            FaceDb::build(&config.face_db_path, fm).unwrap_or_else(|_| FaceDb::empty())
         } else {
             FaceDb::empty()
         };

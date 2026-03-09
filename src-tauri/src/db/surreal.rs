@@ -1,31 +1,71 @@
-/// SurrealDB connection module
+/// SurrealDB connection module.
+///
+/// Strategy: try WebSocket first (lower latency for streaming queries).
+/// If WS times out after 10s (e.g. AppImage sandbox, proxy, or broken WS
+/// upgrade), fall back to HTTP which is simpler and more portable.
 use anyhow::{Context, Result};
 use surrealdb::Surreal;
-use surrealdb::engine::remote::ws::{Ws, Client};
+use surrealdb::engine::any::Any;
 use surrealdb::opt::auth::Root;
 use std::time::Duration;
 
 const NS: &str = "auraseek";
 const DB_NAME: &str = "auraseek";
-const CONNECT_TIMEOUT_SECS: u64 = 10;
+const WS_TIMEOUT_SECS: u64 = 10;
+const HTTP_TIMEOUT_SECS: u64 = 10;
 
 #[derive(Clone)]
 pub struct SurrealDb {
-    pub db: Surreal<Client>,
+    pub db: Surreal<Any>,
 }
 
 impl SurrealDb {
+    /// Connect to SurrealDB: WS first, fallback HTTP.
     pub async fn connect(addr: &str, user: &str, pass: &str) -> Result<Self> {
-        crate::log_info!("🔌 Connecting to SurrealDB at ws://{}...", addr);
+        // ── 1. Try WebSocket ─────────────────────────────────────────────────
+        let ws_url = format!("ws://{}", addr);
+        crate::log_info!("🔌 Connecting to SurrealDB via WS: {}...", ws_url);
+
+        match tokio::time::timeout(
+            Duration::from_secs(WS_TIMEOUT_SECS),
+            surrealdb::engine::any::connect(&ws_url),
+        ).await {
+            Ok(Ok(db)) => {
+                crate::log_info!("✅ WS connection established");
+                return Self::finish_connect(db, addr, user, pass, "ws").await;
+            }
+            Ok(Err(e)) => {
+                crate::log_warn!("⚠️  WS connection failed: {}. Falling back to HTTP...", e);
+            }
+            Err(_) => {
+                crate::log_warn!("⚠️  WS connection timed out after {}s. Falling back to HTTP...", WS_TIMEOUT_SECS);
+            }
+        }
+
+        // ── 2. Fallback: HTTP ────────────────────────────────────────────────
+        let http_url = format!("http://{}", addr);
+        crate::log_info!("🔌 Connecting to SurrealDB via HTTP: {}...", http_url);
 
         let db = tokio::time::timeout(
-            Duration::from_secs(CONNECT_TIMEOUT_SECS),
-            Surreal::new::<Ws>(addr)
+            Duration::from_secs(HTTP_TIMEOUT_SECS),
+            surrealdb::engine::any::connect(&http_url),
         )
         .await
-        .map_err(|_| anyhow::anyhow!("Connection timeout after {}s to SurrealDB at {}", CONNECT_TIMEOUT_SECS, addr))?
-        .context(format!("Failed to connect to SurrealDB at {}", addr))?;
+        .map_err(|_| anyhow::anyhow!("HTTP connection also timed out after {}s to {}", HTTP_TIMEOUT_SECS, addr))?
+        .context(format!("HTTP connection failed to SurrealDB at {}", http_url))?;
 
+        crate::log_info!("✅ HTTP connection established");
+        Self::finish_connect(db, addr, user, pass, "http").await
+    }
+
+    /// Authenticate, select namespace/database, run schema, return `SurrealDb`.
+    async fn finish_connect(
+        db: Surreal<Any>,
+        addr: &str,
+        user: &str,
+        pass: &str,
+        proto: &str,
+    ) -> Result<Self> {
         crate::log_info!("🔑 Authenticating as user '{}'...", user);
 
         tokio::time::timeout(
@@ -43,7 +83,7 @@ impl SurrealDb {
         db.use_ns(NS).use_db(DB_NAME).await
             .context("Failed to select namespace/database")?;
 
-        crate::log_info!("✅ SurrealDB connected | ns={} db={}", NS, DB_NAME);
+        crate::log_info!("✅ SurrealDB connected via {} | addr={} ns={} db={}", proto, addr, NS, DB_NAME);
 
         let s = Self { db };
         s.ensure_schema().await?;
