@@ -21,10 +21,8 @@ use ingest::image_ingest::IngestSummary;
 use search::pipeline::{SearchPipeline, SearchQuery};
 use utils::logger::Logger;
 
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use notify_debouncer_full::{new_debouncer, Debouncer, DebouncedEvent, FileIdMap};
-use std::time::Duration;
-use std::path::PathBuf;
+use notify::{RecommendedWatcher};
+use notify_debouncer_full::{Debouncer, FileIdMap};
 
 type AppWatcher = Debouncer<RecommendedWatcher, FileIdMap>;
 
@@ -84,9 +82,8 @@ impl AppState {
             source_dir:    Mutex::new(String::new()),
             sync_status:   Arc::new(Mutex::new(SyncStatus::default())),
             surreal_child: std::sync::Mutex::new(None),
-            data_dir:      std::sync::Mutex::new(std::path::PathBuf::from(".")),
+            data_dir:       std::sync::Mutex::new(std::path::PathBuf::from(".")),
             watcher_handle: std::sync::Mutex::new(None),
-            watcher:       std::sync::Mutex::new(None),
         }
     }
 }
@@ -231,7 +228,7 @@ async fn cmd_init(state: State<'_, AppState>) -> Result<String, String> {
                 Ok(Some(dir)) => {
                     crate::log_info!("📂 source_dir loaded from config: {}", dir);
                     *state.source_dir.lock().await = dir;
-                    let _ = setup_watcher(&state).await;
+                    // Filesystem watcher for source_dir is managed by restart_fs_watcher.
                 }
                 Ok(None) => {
                     crate::log_info!("📂 No source_dir configured yet (first run)");
@@ -810,77 +807,6 @@ fn dirs_home() -> std::path::PathBuf {
         .or_else(|_| std::env::var("USERPROFILE"))
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
-}
-
-// ─── Filesystem watcher for source_dir ─────────────────────────────────────────
-
-async fn setup_watcher(state: &State<'_, AppState>) -> Result<(), String> {
-    let dir = state.source_dir.lock().await.clone();
-    if dir.is_empty() {
-        crate::log_info!("🛈 No source_dir set, watcher not started");
-        // Clear any existing watcher
-        if let Ok(mut guard) = state.watcher.lock() {
-            *guard = None;
-        }
-        return Ok(());
-    }
-
-    let path = PathBuf::from(&dir);
-    if !path.exists() {
-        crate::log_warn!("⚠️ source_dir '{}' does not exist on disk, watcher not started", dir);
-        if let Ok(mut guard) = state.watcher.lock() {
-            *guard = None;
-        }
-        return Ok(());
-    }
-
-    // Drop old watcher if any
-    {
-        if let Ok(mut guard) = state.watcher.lock() {
-            *guard = None;
-        }
-    }
-
-    let sync_arc = state.sync_status.clone();
-    let dir_clone = dir.clone();
-
-    let debouncer = new_debouncer(
-        Duration::from_secs(2),
-        None,
-        move |events: Result<Vec<DebouncedEvent>, Vec<notify::Error>>| {
-            if let Ok(evts) = events {
-                if evts.is_empty() {
-                    return;
-                }
-                // Simple heuristic: whenever any change happens under source_dir,
-                // mark sync_status as "idle" so frontend can trigger a rescan if desired.
-                let rt = tokio::runtime::Handle::current();
-                let sync_arc = sync_arc.clone();
-                let dir_for_msg = dir_clone.clone();
-                rt.spawn(async move {
-                    let mut st = sync_arc.lock().await;
-                    if st.state != "syncing" {
-                        st.state = "idle".into();
-                        st.message = format!("Thư mục '{}' vừa thay đổi, hãy đồng bộ lại nếu cần.", dir_for_msg);
-                    }
-                });
-            }
-        },
-    )
-    .map_err(|e| format!("Failed to create file watcher: {}", e))?;
-
-    let mut debouncer = debouncer;
-    debouncer
-        .watcher()
-        .watch(&path, RecursiveMode::Recursive)
-        .map_err(|e| format!("Failed to watch '{}': {}", dir, e))?;
-
-    if let Ok(mut guard) = state.watcher.lock() {
-        *guard = Some(debouncer);
-    }
-
-    crate::log_info!("👀 Filesystem watcher started for '{}'", dir);
-    Ok(())
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
