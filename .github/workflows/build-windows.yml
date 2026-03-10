@@ -42,6 +42,23 @@ jobs:
           Invoke-WebRequest -Uri $WindowsUrl -OutFile "src-tauri/binaries/surreal-x86_64-pc-windows-msvc.exe"
           Write-Host "Download successful."
 
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "16.0"
+
+      - name: Install OpenCV with vcpkg
+        run: |
+          vcpkg install opencv4[contrib,nonfree]:x64-windows
+          vcpkg integrate install
+        shell: bash
+
+      - name: Set OpenCV Environment Variables
+        run: |
+          echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> $GITHUB_ENV
+          echo "OPENCV_LINK_LIBS=opencv_world410" >> $GITHUB_ENV # Adjust version number if vcpkg installs a different one
+        shell: bash
+
       - name: Install Frontend Dependencies
         run: yarn install
 
