@@ -6,43 +6,43 @@ export function AlbumsView({ photos = [], onNavigate }: { photos?: Photo[], onNa
 
     // Filter photos for collections
     const favPhotos = photos.filter(p => p.favorite);
-    
+
     // Robust screenshot detection logic
     const isScreenshot = (p: Photo) => {
         if (!p.filePath) return false;
         const path = p.filePath.toLowerCase();
         const name = path.split(/[/\\]/).pop() || "";
-        
-        return path.includes("screenshot") || 
-               path.includes("screen-capture") ||
-               path.includes("screencast") ||
-               path.includes("ảnh chụp màn hình") ||
-               path.includes("screenshots") ||
-               name.startsWith("scr_") || 
-               name.includes("screen_shot") ||
-               // Some systems use specific labels if detected
-               p.labels?.includes("cell phone") || 
-               p.labels?.includes("laptop") ||
-               p.labels?.includes("monitor");
+
+        return path.includes("screenshot") ||
+            path.includes("screen-capture") ||
+            path.includes("screencast") ||
+            path.includes("ảnh chụp màn hình") ||
+            path.includes("screenshots") ||
+            name.startsWith("scr_") ||
+            name.includes("screen_shot") ||
+            // Some systems use specific labels if detected
+            p.labels?.includes("cell phone") ||
+            p.labels?.includes("laptop") ||
+            p.labels?.includes("monitor");
     };
-    
+
     const scrPhotos = photos.filter(isScreenshot);
 
     const collections = [
-        { 
-            id: "fav", 
-            title: "Yêu thích", 
-            count: favPhotos.length, 
-            icon: FolderHeart, 
-            coverUrl: favPhotos[0]?.url || null,
+        {
+            id: "fav",
+            title: "Yêu thích",
+            count: favPhotos.length,
+            icon: FolderHeart,
+            coverUrl: favPhotos[0]?.thumbnailUrl || favPhotos[0]?.url || null,
             emptyMsg: "Chưa có ảnh yêu thích nào"
         },
-        { 
-            id: "scr", 
-            title: "Ảnh chụp màn hình", 
-            count: scrPhotos.length, 
-            icon: Smartphone, 
-            coverUrl: scrPhotos[0]?.url || null,
+        {
+            id: "scr",
+            title: "Ảnh chụp màn hình",
+            count: scrPhotos.length,
+            icon: Smartphone,
+            coverUrl: scrPhotos[0]?.thumbnailUrl || scrPhotos[0]?.url || null,
             emptyMsg: "Chưa có ảnh chụp màn hình nào"
         },
     ];
@@ -84,7 +84,7 @@ export function AlbumsView({ photos = [], onNavigate }: { photos?: Photo[], onNa
                     id: "tag_" + normalizedTag,
                     title,
                     count: 0,
-                    coverUrl: p.url
+                    coverUrl: p.thumbnailUrl || p.url
                 });
             }
             albumsMap.get(normalizedTag)!.count++;
