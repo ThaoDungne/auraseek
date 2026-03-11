@@ -42,6 +42,19 @@ jobs:
           Invoke-WebRequest -Uri $WindowsUrl -OutFile "src-tauri/binaries/surreal-x86_64-pc-windows-msvc.exe"
           Write-Host "Download successful."
 
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: C:\vcpkg\installed
+          key: ${{ runner.os }}-vcpkg-opencv4-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-vcpkg-opencv4-
+
+      - name: Cache Rust Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
       - name: Install LLVM and Clang
         run: choco install llvm --yes
         shell: powershell
