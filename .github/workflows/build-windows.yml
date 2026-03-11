@@ -140,6 +140,7 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENCV_DISABLE_OPENCL: "1"
         with:
           args: ''
 
