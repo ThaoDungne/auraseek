@@ -15,7 +15,7 @@ import { FilteredGalleryView } from "@/views/gallery/FilteredGalleryView";
 import { SearchResultsView } from "@/views/search/SearchResultsView";
 import { FirstRunModal } from "@/components/common/FirstRunModal";
 import ModelDownloadScreen, { type ModelDownloadEvent } from "@/components/common/ModelDownloadScreen";
-import { AuraSeekApi, localFileUrl, type SearchResult, type TimelineGroup, type PersonGroup, type SearchFilters as ApiFilters, type SyncStatus } from "@/lib/api";
+import { AuraSeekApi, localFileUrl, streamFileUrl, type SearchResult, type TimelineGroup, type PersonGroup, type SearchFilters as ApiFilters, type SyncStatus } from "@/lib/api";
 import type { Photo } from "@/types/photo.type";
 
 type AppRoute = {
@@ -35,6 +35,7 @@ function App() {
   const [route, setRoute] = useState<AppRoute>({ view: "timeline" });
   const [searchQuery, setSearchQuery] = useState("");
   const [searchImagePath, setSearchImagePath] = useState<string | null>(null);
+  const searchTempPathRef = useRef<string | null>((window as any).__AURASEEK_SEARCH_TMP_PATH__ || null);
   const [activeFilters, setActiveFilters] = useState<ActiveFilters>({});
   const [downloadProgress, setDownloadProgress] = useState<ModelDownloadEvent | null>(null);
   const [needsDownload, setNeedsDownload] = useState(false);
@@ -112,6 +113,9 @@ function App() {
         setInitError(null);
         setDownloadProgress(null); // hide loading screen now that engine is ready
 
+        // Pre-fetch stream port so thumbnail URLs can use it synchronously later
+        await AuraSeekApi.getStreamPort().catch(() => null);
+
         // Get source_dir from backend
         const dir = await AuraSeekApi.getSourceDir();
         setSourceDir(dir);
@@ -177,13 +181,18 @@ function App() {
       setTimelineGroups(groups);
       console.log("[AuraSeek] 📅 Timeline loaded:", groups.length, "groups");
 
-      const allPhotos: Photo[] = groups.flatMap(g =>
-        g.items.map(item => {
-          const isVideo = item.media_type === "video";
-          // Thumbnail is saved alongside the video as "<stem>.thumb.jpg"
-          const thumbnailUrl = isVideo
-            ? localFileUrl(item.file_path.replace(/\.[^.]+$/, ".thumb.jpg"))
-            : undefined;
+      const allPhotos: Photo[] = await Promise.all(groups.flatMap(g =>
+        g.items.map(async item => {
+          // Video thumbnails are absolute paths in the thumbnails cache dir.
+          // Serve them via the local Axum HTTP server to bypass WebKit asset:// restrictions.
+          let thumbnailUrl: string | undefined;
+          if (item.thumbnail_path) {
+            if (item.thumbnail_path.startsWith("/") || item.thumbnail_path.match(/^[A-Za-z]:\\/)) {
+              thumbnailUrl = await streamFileUrl(item.thumbnail_path);
+            } else {
+              thumbnailUrl = localFileUrl(item.thumbnail_path);
+            }
+          }
           return {
             id: item.media_id,
             url: localFileUrl(item.file_path),
@@ -204,7 +213,7 @@ function App() {
             filePath: item.file_path,
           };
         })
-      );
+      ));
       setPhotos(allPhotos);
     } catch (err) {
       console.warn("[AuraSeek] ⚠️ Timeline load failed:", err);
@@ -368,7 +377,15 @@ function App() {
       setRoute({ view: "search_results" });
     } catch (err) {
       console.error("[AuraSeek] ❌ Search failed:", err);
+      // Dù lỗi, vẫn chuyển sang màn kết quả rỗng để người dùng thấy trạng thái.
+      setSearchResults([]);
+      setRoute({ view: "search_results" });
     } finally {
+      // Nếu có file tạm cho search image, xoá sau khi search xong
+      if (searchTempPathRef.current) {
+        AuraSeekApi.deleteFile(searchTempPathRef.current).catch(() => {});
+        searchTempPathRef.current = null;
+      }
       setIsSearching(false);
     }
   }, [activeFilters]);
@@ -394,12 +411,18 @@ function App() {
     setSearchQuery("");
     setSearchImagePath(null);
     if (key === "timeline") loadTimeline();
-    if (key === "people") loadPeople();
+    if (key === "people") { loadPeople(); loadTimeline(); }
   }, [loadTimeline, loadPeople]);
 
   useEffect(() => {
     const handler = () => loadTimeline();
     window.addEventListener("refresh_photos", handler);
+
+    // When backend ingest pipeline reports per-file progress (auto-scan or manual),
+    // refresh the timeline so new photos/videos appear progressively.
+    const unlistenPromise = listen("ingest-progress", () => {
+      loadTimeline();
+    });
 
     // Optimistic favorite handler for instant UI feedback
     const favoriteHandler = (e: any) => {
@@ -419,6 +442,7 @@ function App() {
     return () => {
       window.removeEventListener("refresh_photos", handler);
       window.removeEventListener("photo_toggle_favorite", favoriteHandler);
+      unlistenPromise.then(unlisten => unlisten()).catch(() => {});
     };
   }, [loadTimeline]);
 
@@ -449,7 +473,11 @@ function App() {
           />
         );
       case "duplicates":
-        return <DuplicatesView />;
+      case "duplicate_images":
+        return <DuplicatesView mediaType="image" />;
+      case "duplicate_videos":
+        return <DuplicatesView mediaType="video" />;
+
       case "filtered":
         return (
           <FilteredGalleryView

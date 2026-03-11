@@ -9,10 +9,14 @@ use opencv::{
 use crate::processor::vision::face_image::FaceDb;
 use crate::log_info;
 
-const SCORE_THRESHOLD: f32 = 0.95; 
+const SCORE_THRESHOLD: f32 = 0.93; 
 const NMS_THRESHOLD: f32 = 0.3;
-const TOP_K: i32 = 5000;
-const COSINE_THRESHOLD: f32 = 0.36;
+const TOP_K: i32 = 500000;
+/// Cosine similarity threshold for face identity matching.
+/// Dùng chung cho:
+/// - so khớp với face_db (FaceDb::query_id)
+/// - gom nhóm các mặt "unknown" trong cùng session (session_faces)
+pub const COSINE_THRESHOLD: f32 = 0.33;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct FaceGroup {

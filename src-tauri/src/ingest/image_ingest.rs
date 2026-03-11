@@ -10,6 +10,7 @@ use sha2::{Sha256, Digest};
 use crate::db::{SurrealDb, DbOperations};
 use crate::db::models::{MediaDoc, FileInfo, MediaMetadata, ObjectEntry, FaceEntry, Bbox, PersonDoc};
 use crate::processor::AuraSeekEngine;
+use tauri::Emitter;
 use crate::processor::pipeline::EngineOutput;
 use crate::ingest::video_ingest;
 
@@ -17,11 +18,15 @@ pub const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "bmp", "webp", "ti
 pub const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mov", "avi", "mkv", "webm", "m4v", "flv", "wmv"];
 
 /// Scan a source folder and ingest all images/videos.
+/// If `thumb_cache_dir` is Some, video/face thumbnails are written there instead of next to the source files.
+/// If `app` is Some, an `"ingest-progress"` Tauri event is emitted after each file is processed so
+/// the frontend can refresh the timeline progressively.
 pub async fn ingest_folder(
     source_dir: String,
     db: Arc<Mutex<Option<SurrealDb>>>,
     engine: Arc<Mutex<Option<AuraSeekEngine>>>,
-    progress_tx: Option<tauri::ipc::Channel<IngestProgress>>,
+    app: Option<tauri::AppHandle>,
+    thumb_cache_dir: Option<std::path::PathBuf>,
 ) -> Result<IngestSummary> {
     let source_path = Path::new(&source_dir);
     if !source_path.exists() {
@@ -110,6 +115,7 @@ pub async fn ingest_folder(
     summary.errors = errors;
 
     let total_to_process = to_process.len();
+    let app_handle = app.clone();
 
     // Thread 2: AI processing + embedding
     let mut ai_processed = 0usize;
@@ -121,11 +127,12 @@ pub async fn ingest_folder(
             .to_string();
 
         crate::log_info!("🤖 [AI {}/{}] Processing: {}", ai_processed + 1, total_to_process, file_name_only);
-        let t0 = std::time::Instant::now();
+        let _t0 = std::time::Instant::now();
 
         if is_video {
             // ── Full video pipeline: scene detection → AI → embeddings ───────
-            match video_ingest::process_video(&path_str, &media_id, &db, &engine).await {
+            let cache_ref = thumb_cache_dir.as_deref();
+            match video_ingest::process_video(&path_str, &media_id, &db, &engine, cache_ref).await {
                 Ok(Some(thumb)) => crate::log_info!("🎥 Video done, thumbnail: {}", thumb),
                 Ok(None)        => crate::log_info!("🎥 Video done (no thumbnail)"),
                 Err(e)          => crate::log_warn!("🎥 Video pipeline error for {}: {}", file_name_only, e),
@@ -137,12 +144,17 @@ pub async fn ingest_folder(
 
         ai_processed += 1;
 
-        if let Some(ref ptx) = progress_tx {
-            let _ = ptx.send(IngestProgress {
-                processed: ai_processed,
-                total: total_to_process,
-                current_file: file_name_only,
-            });
+        if let Some(ref app) = app_handle {
+            if let Err(e) = app.emit(
+                "ingest-progress",
+                &IngestProgress {
+                    processed: ai_processed,
+                    total: total_to_process,
+                    current_file: file_name_only.clone(),
+                },
+            ) {
+                crate::log_warn!("⚠️ Failed to emit ingest-progress: {}", e);
+            }
         }
     }
 
@@ -220,7 +232,7 @@ pub async fn process_image_file(
 
     let db_guard = db.lock().await;
     if let Some(ref sdb) = *db_guard {
-        if let Err(e) = DbOperations::update_media_ai(sdb, media_id, objects, faces).await {
+        if let Err(e) = DbOperations::update_media_ai(sdb, media_id, objects, faces, None).await {
             crate::log_warn!("⚠️ update_media_ai failed for {}: {}", media_id, e);
         }
         if !output.vision_embedding.is_empty() {
@@ -253,19 +265,12 @@ pub async fn scan_single_file(
 ) -> Result<Option<String>> {
     let sha256 = compute_sha256(path)?;
 
-    // Dedup and process check
-    {
-        let db_guard = db.lock().await;
-        let sdb = db_guard.as_ref().ok_or_else(|| anyhow::anyhow!("DB not connected"))?;
-        if let Some((existing_id, is_processed)) = DbOperations::check_file_status(sdb, &sha256).await? {
-            if is_processed {
-                return Ok(None); // File exists and is fully processed -> Skip
-            } else {
-                // File exists but is NOT processed (failed in previous run) -> Return ID to process again
-                return Ok(Some(existing_id));
-            }
-        }
-    }
+    // Trước đây ở đây có logic dedup theo SHA-256:
+    // - nếu file có cùng sha256 và đã processed => bỏ qua (skip)
+    // - nếu có nhưng chưa processed => dùng lại media_id cũ
+    // Bây giờ yêu cầu là VẪN CHO PHÉP lưu các ảnh giống nhau hoàn toàn,
+    // nên bỏ hẳn bước kiểm tra này. Mỗi file tìm thấy sẽ tạo một media record mới,
+    // còn chức năng "Khử trùng lặp" sẽ xử lý việc gộp/hiển thị sau.
 
     let meta = std::fs::metadata(path)?;
     let size = meta.len();
@@ -273,6 +278,20 @@ pub async fn scan_single_file(
         .and_then(|n| n.to_str())
         .unwrap_or("")
         .to_string();
+
+    {
+        let db_guard = db.lock().await;
+        if let Some(ref sdb) = *db_guard {
+            if let Ok(Some((media_id, processed))) = DbOperations::check_exact_file(sdb, &name, &sha256).await {
+                if processed {
+                    return Ok(None); // Skip, exact file already processed
+                } else {
+                    return Ok(Some(media_id)); // Already in queue/database but not yet processed
+                }
+            }
+        }
+    }
+
     let path_str = path.to_string_lossy().to_string(); // used for image dimension reading only
 
     let (width, height) = if media_type == "image" {
@@ -303,6 +322,7 @@ pub async fn scan_single_file(
         },
         objects: vec![],
         faces: vec![],
+        thumbnail: None,
         processed: false,
         deleted_at: None,
         is_hidden: false,
@@ -363,11 +383,13 @@ fn get_image_dimensions(path: &str) -> (Option<u32>, Option<u32>) {
 
 /// Ingest a specific list of image files (for copy/paste or drag-drop).
 /// Files are copied to `dest_dir` (source_dir) then processed.
+/// If `thumb_cache_dir` is Some, video/face thumbnails are written there instead of next to the source files.
 pub async fn ingest_files(
     file_paths: Vec<String>,
     dest_dir: String,
     db: Arc<Mutex<Option<SurrealDb>>>,
     engine: Arc<Mutex<Option<AuraSeekEngine>>>,
+    thumb_cache_dir: Option<std::path::PathBuf>,
 ) -> Result<IngestSummary> {
     let dest_path = Path::new(&dest_dir);
     if !dest_path.exists() {
@@ -419,7 +441,8 @@ pub async fn ingest_files(
 
                 if is_video {
                     // ── Full video pipeline ─────────────────────────────────
-                    if let Err(e) = video_ingest::process_video(&dest_str, &media_id, &db, &engine).await {
+                    let cache_ref = thumb_cache_dir.as_deref();
+                    if let Err(e) = video_ingest::process_video(&dest_str, &media_id, &db, &engine, cache_ref).await {
                         crate::log_warn!("🎥 Video pipeline error for {}: {}", file_name, e);
                     }
                 } else {
@@ -450,7 +473,7 @@ pub async fn ingest_files(
 
                                 let db_guard = db.lock().await;
                                 if let Some(ref sdb) = *db_guard {
-                                    let _ = DbOperations::update_media_ai(sdb, &media_id, objects, faces).await;
+                                    let _ = DbOperations::update_media_ai(sdb, &media_id, objects, faces, None).await;
                                     if !output.vision_embedding.is_empty() {
                                         let _ = DbOperations::insert_embedding(sdb, &media_id, "image", None, None, output.vision_embedding).await;
                                     }

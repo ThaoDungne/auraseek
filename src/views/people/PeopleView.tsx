@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import type { PersonGroup } from "@/lib/api";
-import { localFileUrl, AuraSeekApi } from "@/lib/api";
+import { localFileUrl, streamFileUrl, AuraSeekApi } from "@/lib/api";
 import { Pencil, Check, X, User } from "lucide-react";
 
 interface PeopleViewProps {
@@ -130,8 +130,19 @@ function PersonCard({
     const displayName = person.name || `Người ${index + 1}`;
 
     // Use thumbnail (matches face_bbox) when available, fall back to cover_path
-    const imgPath = person.thumbnail || person.cover_path;
-    const imageUrl = imgPath ? localFileUrl(imgPath) : null;
+    const rawPath = person.thumbnail || person.cover_path;
+    const [imageUrl, setImageUrl] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!rawPath) { setImageUrl(null); return; }
+        // Absolute paths (video face thumbnails in cache dir) must go through HTTP stream server
+        // because Tauri asset:// protocol can have access issues for those paths on Linux.
+        if (rawPath.startsWith("/") || rawPath.match(/^[A-Za-z]:\\/)) {
+            streamFileUrl(rawPath).then(url => setImageUrl(url));
+        } else {
+            setImageUrl(localFileUrl(rawPath));
+        }
+    }, [rawPath]);
 
     return (
         <div className="group flex flex-col items-center gap-3">

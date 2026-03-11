@@ -6,6 +6,7 @@ import {
   Users,
   Lock,
   Trash2,
+  CopySlash,
 } from "lucide-react";
 import {
   Sidebar,
@@ -34,7 +35,7 @@ const mainItems = [
 
 const collections = [
   { title: "Album", url: "#", icon: Library, key: "albums" },
-  { 
+  {
     title: "Yêu thích", url: "#", icon: Star, key: "favorites",
     subItems: [
       { title: "Ảnh yêu thích", key: "favorite_photos" },
@@ -42,6 +43,13 @@ const collections = [
     ]
   },
   { title: "Người", url: "#", icon: Users, key: "people" },
+  {
+    title: "Khử trùng lặp", url: "#", icon: CopySlash, key: "duplicates",
+    subItems: [
+      { title: "Ảnh trùng lặp", key: "duplicate_images" },
+      { title: "Video trùng lặp", key: "duplicate_videos" },
+    ]
+  },
 ];
 
 const management = [
@@ -102,7 +110,7 @@ export function AppSidebar({
             <SidebarMenu className="gap-1">
               {collections.map((item) => {
                 const isGroupActive = activeKey === item.key || item.subItems?.some(s => activeKey === s.key);
-                
+
                 if (item.subItems) {
                   return (
                     <Collapsible
@@ -125,15 +133,15 @@ export function AppSidebar({
                         <CollapsibleContent>
                           <SidebarMenuSub className="ml-5 mt-1 border-l-2 border-border/40 pl-3">
                             {item.subItems.map((sub) => (
-                               <SidebarMenuSubItem key={sub.key}>
-                                 <SidebarMenuSubButton
-                                   isActive={activeKey === sub.key}
-                                   onClick={() => onNavClick?.(sub.key)}
-                                   className={`rounded-full px-3 py-1.5 cursor-pointer text-[13px] ${activeKey === sub.key ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'}`}
-                                 >
-                                   {sub.title}
-                                 </SidebarMenuSubButton>
-                               </SidebarMenuSubItem>
+                              <SidebarMenuSubItem key={sub.key}>
+                                <SidebarMenuSubButton
+                                  isActive={activeKey === sub.key}
+                                  onClick={() => onNavClick?.(sub.key)}
+                                  className={`rounded-full px-3 py-1.5 cursor-pointer text-[13px] ${activeKey === sub.key ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'}`}
+                                >
+                                  {sub.title}
+                                </SidebarMenuSubButton>
+                              </SidebarMenuSubItem>
                             ))}
                           </SidebarMenuSub>
                         </CollapsibleContent>

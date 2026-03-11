@@ -29,7 +29,7 @@ use crate::ingest::image_ingest::{IMAGE_EXTENSIONS, VIDEO_EXTENSIONS};
 use crate::utils::visualize::{
     draw_detections, draw_faces, draw_segmentation, extract_masks, load_rgb, save_rgb,
 };
-use crate::utils::{BOLD, CYAN, GREEN, MAGENTA, RESET, YELLOW};
+use crate::utils::{BOLD, CYAN, GREEN, MAGENTA, RESET};
 
 const FONT_PATH: Option<&'static str> = Some("assets/fonts/DejaVuSans.ttf");
 

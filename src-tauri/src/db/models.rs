@@ -76,6 +76,8 @@ pub struct MediaDoc {
     pub faces:      Vec<FaceEntry>,
     pub processed:  bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub thumbnail:  Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub deleted_at: Option<SurrealDatetime>,
     #[serde(default)]
     pub is_hidden:  bool,
@@ -93,6 +95,8 @@ pub struct MediaRow {
     pub processed:  bool,
     #[serde(default)]
     pub favorite:   bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thumbnail:  Option<String>,
     pub deleted_at: Option<SurrealDatetime>,
     #[serde(default)]
     pub is_hidden:  bool,
@@ -211,6 +215,7 @@ pub struct SearchResult {
     pub detected_faces:    Vec<DetectedFace>,
     pub width:             Option<u32>,
     pub height:            Option<u32>,
+    pub thumbnail_path:    Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -248,6 +253,8 @@ pub struct TimelineItem {
     pub is_hidden:         bool,
     pub detected_objects:  Vec<DetectedObject>,
     pub detected_faces:    Vec<DetectedFace>,
+    /// Absolute path to video thumbnail JPEG (None for images)
+    pub thumbnail_path:    Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -273,6 +280,7 @@ pub struct DuplicateItem {
     pub media_id:  String,
     pub file_path: String,
     pub size:      u64,
+    pub thumbnail_path: Option<String>,
 }
 
 /// Generic record ID helper (for .take())

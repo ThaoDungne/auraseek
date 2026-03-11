@@ -10,8 +10,8 @@ use crate::db::models::SearchResult;
 use crate::search::text_search::{encode_text_query, search_by_text_embedding};
 use crate::search::image_search::{encode_image_query, search_by_image_embedding};
 
-const DEFAULT_THRESHOLD: f32 = 0.15;
-const DEFAULT_LIMIT: usize = 100;
+const DEFAULT_THRESHOLD: f32 = 0.6;
+const DEFAULT_LIMIT: usize = 10000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SearchMode {
@@ -52,12 +52,14 @@ impl SearchPipeline {
         let raw_hits = match query.mode {
             SearchMode::Text => {
                 let text = query.text.as_deref().unwrap_or("");
+                crate::log_info!("🔍 [SearchPipeline::run] mode=Text text='{}'", text);
                 let embedding = encode_text_query(engine, text)?;
                 search_by_text_embedding(db, &embedding, DEFAULT_THRESHOLD, DEFAULT_LIMIT).await?
             }
 
             SearchMode::Image => {
                 let path = query.image_path.as_deref().unwrap_or("");
+                crate::log_info!("🔍 [SearchPipeline::run] mode=Image path='{}' threshold={}", path, DEFAULT_THRESHOLD);
                 let embedding = encode_image_query(engine, path)?;
                 search_by_image_embedding(db, &embedding, DEFAULT_THRESHOLD, DEFAULT_LIMIT).await?
             }
@@ -65,11 +67,18 @@ impl SearchPipeline {
             SearchMode::Combined => {
                 let text = query.text.as_deref().unwrap_or("");
                 let path = query.image_path.as_deref().unwrap_or("");
+                crate::log_info!("🔍 [SearchPipeline::run] mode=Combined text='{}' path='{}' threshold={}", text, path, DEFAULT_THRESHOLD);
 
                 let text_emb  = encode_text_query(engine, text)?;
                 let img_emb   = encode_image_query(engine, path)?;
                 let text_hits = search_by_text_embedding(db, &text_emb, DEFAULT_THRESHOLD, DEFAULT_LIMIT).await?;
                 let img_hits  = search_by_image_embedding(db, &img_emb, DEFAULT_THRESHOLD, DEFAULT_LIMIT).await?;
+
+                crate::log_info!(
+                    "🔍 [SearchPipeline::run] combined text_hits={} img_hits={}",
+                    text_hits.len(),
+                    img_hits.len()
+                );
 
                 let text_map: HashMap<String, f32> = text_hits.into_iter().collect();
                 let mut combined = vec![];
@@ -78,6 +87,10 @@ impl SearchPipeline {
                         combined.push((mid, (img_score + text_score) / 2.0));
                     }
                 }
+                crate::log_info!(
+                    "🔍 [SearchPipeline::run] combined_intersection={}",
+                    combined.len()
+                );
                 combined.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
                 combined
             }

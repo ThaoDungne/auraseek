@@ -16,7 +16,7 @@ pub fn build_session(model_path: &str) -> anyhow::Result<ort::session::Session> 
     for (name, builder_fn) in ep_builders {
         let ep = builder_fn();
         match Session::builder()?.with_execution_providers([ep]) {
-            Ok(builder) => {
+            Ok(mut builder) => {
                 match builder.commit_from_file(model_path) {
                     Ok(session) => {
                         log_info!("model: {:<40} | provider: {}", model_path, name);
@@ -35,10 +35,17 @@ pub fn build_session(model_path: &str) -> anyhow::Result<ort::session::Session> 
 
     // fallback to cpu
     let cpu_ep = ort::execution_providers::CPUExecutionProvider::default().build();
-    let session = Session::builder()?
-        .with_execution_providers([cpu_ep])?
-        .commit_from_file(model_path)?;
+
+    // Tránh dùng `?` trên lỗi SessionBuilder (không From vào anyhow do ràng buộc Send/Sync),
+    // thay vào đó map_err thủ công sang anyhow::Error.
+    let builder = Session::builder().map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let mut builder = builder
+        .with_execution_providers([cpu_ep])
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let session = builder
+        .commit_from_file(model_path)
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
     log_info!("model: {:<40} | provider: cpu", model_path);
-    
     Ok(session)
 }

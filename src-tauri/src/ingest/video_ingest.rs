@@ -26,12 +26,15 @@ const SCENE_THRESHOLD: f64 = 0.11;
 const DEDUP_THRESHOLD: f32 = 0.92;
 
 /// Full video processing pipeline.
-/// Returns the thumbnail filename (stem + ".thumb.jpg") if created, None otherwise.
+/// If `thumb_cache_dir` is Some, thumbnails (video + face) are written there instead of next to the video;
+/// person.thumbnail is then stored as full path. Otherwise thumbs are written next to the video (legacy).
+/// Returns the thumbnail filename or path if created, None otherwise.
 pub async fn process_video(
     video_path: &str,
     media_id: &str,
     db: &Arc<Mutex<Option<SurrealDb>>>,
     engine: &Arc<Mutex<Option<AuraSeekEngine>>>,
+    thumb_cache_dir: Option<&std::path::Path>,
 ) -> Result<Option<String>> {
     let (fps, total_frames) = probe_video(video_path)?;
     log_info!("🎥 Video probe: {} fps={:.2} frames={}", video_path, fps, total_frames);
@@ -60,10 +63,9 @@ pub async fn process_video(
         .and_then(|s| s.to_str())
         .unwrap_or("vid");
 
-    let debug_base_dir = Path::new("/home/phuocdai/Documents/output");
-    let _ = std::fs::create_dir_all(&debug_base_dir);
-    let tmp_dir = debug_base_dir.join(stem);
-    let _ = std::fs::remove_dir_all(&tmp_dir); // clean old debug frames
+    // Use a unique temp directory per video — cleaned up after processing.
+    let tmp_dir = std::env::temp_dir().join(format!("auraseek_frames_{}_{}", stem, std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp_dir);
     std::fs::create_dir_all(&tmp_dir)?;
 
     let mut frame_jobs: Vec<u64> = Vec::new();
@@ -127,7 +129,6 @@ pub async fn process_video(
     let mut obj_map: HashMap<String, ObjectEntry>  = HashMap::new();
     let mut face_map: HashMap<String, FaceEntry>   = HashMap::new();
     let mut face_frame_map: HashMap<String, u64>   = HashMap::new();
-    let mut stored_embeddings: Vec<Vec<f32>>        = Vec::new();
     let mut embed_count = 0usize;
 
     let scenes_clone = scenes.clone();
@@ -191,27 +192,19 @@ pub async fn process_video(
             if is_best { face_frame_map.insert(f.face_id.clone(), *frame_idx); }
         }
 
-        // Dedup embeddings and store under video's media_id
+        // Store embeddings under video's media_id (giữ đầy đủ 3 frame/scene, không dedup)
         if !output.vision_embedding.is_empty() {
-            let is_dup = stored_embeddings.iter()
-                .any(|prev| cosine_similarity(prev, &output.vision_embedding) >= DEDUP_THRESHOLD);
-
-            if is_dup {
-                log_info!("  ⏭  Frame {} near-duplicate — embedding skipped", frame_idx);
-            } else {
-                let db_guard = db.lock().await;
-                if let Some(ref sdb) = *db_guard {
-                    if let Err(e) = DbOperations::insert_embedding(
-                        sdb, media_id, "video_frame",
-                        Some(timestamp), Some(*frame_idx as u32),
-                        output.vision_embedding.clone(),
-                    ).await {
-                        log_warn!("  ⚠️ insert_embedding frame {}: {}", frame_idx, e);
-                    } else {
-                        embed_count += 1;
-                        stored_embeddings.push(output.vision_embedding);
-                        log_info!("  ✅ Frame {} @ {:.2}s embedded", frame_idx, timestamp);
-                    }
+            let db_guard = db.lock().await;
+            if let Some(ref sdb) = *db_guard {
+                if let Err(e) = DbOperations::insert_embedding(
+                    sdb, media_id, "video_frame",
+                    Some(timestamp), Some(*frame_idx as u32),
+                    output.vision_embedding.clone(),
+                ).await {
+                    log_warn!("  ⚠️ insert_embedding frame {}: {}", frame_idx, e);
+                } else {
+                    embed_count += 1;
+                    log_info!("  ✅ Frame {} @ {:.2}s embedded", frame_idx, timestamp);
                 }
             }
         }
@@ -230,39 +223,16 @@ pub async fn process_video(
         ))
         .collect();
 
-    {
-        let db_guard = db.lock().await;
-        if let Some(ref sdb) = *db_guard {
-            if let Err(e) = DbOperations::update_media_ai(sdb, media_id, objects, faces).await {
-                log_warn!("⚠️ update_media_ai for video {}: {}", media_id, e);
-            }
-            for (fid, conf, bbox, name, fi) in &detected_faces_for_person {
-                let face_thumb_name = format!("{}_face_{}.thumb.jpg", stem, fid);
-                let face_thumb_path = Path::new(video_path)
-                    .parent().unwrap_or(Path::new("."))
-                    .join(&face_thumb_name);
-                if !face_thumb_path.exists() {
-                    let _ = extract_frame(video_path, *fi, fps, &face_thumb_path);
-                }
-                if let Err(e) = DbOperations::upsert_person(sdb, PersonDoc {
-                    face_id:   fid.clone(),
-                    name:      name.clone(),
-                    thumbnail: Some(face_thumb_name),
-                    conf:      Some(*conf),
-                    face_bbox: Some(bbox.clone()),
-                }).await {
-                    log_warn!("  ⚠️ upsert_person {} for video: {}", fid, e);
-                }
-            }
-        }
-    }
-
     // ── 5. Generate thumbnail from the first processed frame (less likely to be pure black) ──
+    let video_parent = Path::new(video_path).parent().unwrap_or(Path::new("."));
+    if let Some(cache_dir) = thumb_cache_dir {
+        let _ = std::fs::create_dir_all(cache_dir);
+    }
+    
     let thumb_name = format!("{}.thumb.jpg", stem);
-    let thumb_path = Path::new(video_path)
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join(&thumb_name);
+    let thumb_path: std::path::PathBuf = thumb_cache_dir
+        .map(|d| d.join(&thumb_name))
+        .unwrap_or_else(|| video_parent.join(&thumb_name));
 
     // Prefer the first frame we actually extracted & processed; fall back to frame 0.
     let thumb_frame_idx: u64 = frame_jobs.first().copied().unwrap_or(0);
@@ -278,8 +248,43 @@ pub async fn process_video(
         log_warn!("⚠️ Could not generate thumbnail for {}", video_path);
         None
     };
+    
+    let thumb_value_for_db = thumb_cache_dir
+        .map(|_| thumb_path.to_string_lossy().to_string())
+        .or(thumb_result.clone());
 
-    log_info!("🐛 Saved debug scene frames to {}", tmp_dir.display());
+    {
+        let db_guard = db.lock().await;
+        if let Some(ref sdb) = *db_guard {
+            if let Err(e) = DbOperations::update_media_ai(sdb, media_id, objects, faces, thumb_value_for_db).await {
+                log_warn!("⚠️ update_media_ai for video {}: {}", media_id, e);
+            }
+            for (fid, conf, bbox, name, fi) in &detected_faces_for_person {
+                let face_thumb_name = format!("{}_face_{}.thumb.jpg", stem, fid);
+                let face_thumb_path: std::path::PathBuf = thumb_cache_dir
+                    .map(|d| d.join(&face_thumb_name))
+                    .unwrap_or_else(|| video_parent.join(&face_thumb_name));
+                if !face_thumb_path.exists() {
+                    let _ = extract_frame(video_path, *fi, fps, &face_thumb_path);
+                }
+                let face_thumb_value = thumb_cache_dir
+                    .map(|_| face_thumb_path.to_string_lossy().to_string())
+                    .unwrap_or(face_thumb_name);
+                if let Err(e) = DbOperations::upsert_person(sdb, PersonDoc {
+                    face_id:   fid.clone(),
+                    name:      name.clone(),
+                    thumbnail: Some(face_thumb_value),
+                    conf:      Some(*conf),
+                    face_bbox: Some(bbox.clone()),
+                }).await {
+                    log_warn!("  ⚠️ upsert_person {} for video: {}", fid, e);
+                }
+            }
+        }
+    }
+
+    // Clean up temp frames
+    let _ = std::fs::remove_dir_all(&tmp_dir);
 
     log_info!(
         "🎥 Video done: {} embeds, {} objects, {} faces | {}",

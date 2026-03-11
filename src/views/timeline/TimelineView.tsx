@@ -3,7 +3,7 @@ import type { Photo } from "@/types/photo.type";
 import type { TimelineGroup } from "@/lib/api";
 import { PhotoGrid } from "@/components/photos/PhotoGrid";
 import { FullScreenViewer } from "@/components/photo-detail/FullScreenViewer";
-import { localFileUrl } from "@/lib/api";
+import { localFileUrl, streamFileUrlSync } from "@/lib/api";
 
 interface TimelineViewProps {
   timelineGroups?: TimelineGroup[];
@@ -41,7 +41,7 @@ export function TimelineView({
               // Treat anything that is not an explicit video as "photo-like"
               return item.media_type !== "video";
             }
-            
+
             if (!searchQuery.trim()) return true;
             const q = searchQuery.toLowerCase();
             return (
@@ -53,9 +53,15 @@ export function TimelineView({
           .map(item => {
             const isVideo = item.media_type === "video";
             const url = localFileUrl(item.file_path);
-            const thumbnailUrl = isVideo
-              ? localFileUrl(item.file_path.replace(/\.[^.]+$/, ".thumb.jpg"))
-              : undefined;
+            // Use streamFileUrlSync for absolute paths (cached thumbs in data dir), else fallback cleanly.
+            let thumbnailUrl = undefined;
+            if (item.thumbnail_path) {
+              if (item.thumbnail_path.startsWith("/") || item.thumbnail_path.match(/^[A-Za-z]:\\/)) {
+                thumbnailUrl = streamFileUrlSync(item.thumbnail_path);
+              } else {
+                thumbnailUrl = localFileUrl(item.thumbnail_path);
+              }
+            }
 
             return {
               id: item.media_id,
@@ -82,22 +88,22 @@ export function TimelineView({
     // Fallback: group flat photos by month
     const map = new Map<string, { id: string; label: string; photos: Photo[] }>();
     const filteredPhotos = photos.filter(p => {
-        if (mediaType === "video") {
-          return p.type === "video";
-        }
-        if (mediaType === "photo") {
-          // Default everything that is not marked as video into the photo bucket
-          return p.type !== "video";
-        }
-        if (!searchQuery.trim()) return true;
-        
-        const q = searchQuery.toLowerCase();
-        return (
-          p.labels?.some(l => l.toLowerCase().includes(q)) ||
-          p.objects?.some(o => o.toLowerCase().includes(q)) ||
-          p.id.toLowerCase().includes(q)
-        );
-      });
+      if (mediaType === "video") {
+        return p.type === "video";
+      }
+      if (mediaType === "photo") {
+        // Default everything that is not marked as video into the photo bucket
+        return p.type !== "video";
+      }
+      if (!searchQuery.trim()) return true;
+
+      const q = searchQuery.toLowerCase();
+      return (
+        p.labels?.some(l => l.toLowerCase().includes(q)) ||
+        p.objects?.some(o => o.toLowerCase().includes(q)) ||
+        p.id.toLowerCase().includes(q)
+      );
+    });
 
     for (const photo of filteredPhotos) {
       const date = new Date(photo.takenAt);
@@ -116,7 +122,7 @@ export function TimelineView({
 
   return (
     <div className="flex relative h-full flex-1 flex-col overflow-hidden">
-      <div 
+      <div
         id="timeline-scroll-container"
         className="flex-1 overflow-y-auto px-4 pb-6 pt-3 sm:px-6 lg:px-8 relative"
       >
@@ -181,8 +187,8 @@ export function TimelineView({
               if (isFirstOfYear) seenYears.add(year);
 
               return (
-                <div 
-                  key={sec.id} 
+                <div
+                  key={sec.id}
                   className="relative cursor-pointer flex items-center justify-end w-full group/item py-0.5"
                   onClick={() => {
                     const el = document.getElementById(`section-${sec.id}`);
@@ -198,7 +204,7 @@ export function TimelineView({
                       {year}
                     </div>
                     <div className={`h-1 w-1 sm:h-1.5 sm:w-1.5 rounded-full bg-muted-foreground/30 group-hover/item:hidden ${isFirstOfYear ? 'hidden' : 'block mr-1'}`}></div>
-                    
+
                     <div className="hidden group-hover/item:block text-[10px] sm:text-[11px] font-bold text-primary whitespace-nowrap">
                       thg {month} {year}
                     </div>

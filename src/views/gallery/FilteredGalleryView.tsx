@@ -29,6 +29,9 @@ export function FilteredGalleryView({ title, subtitle, filterType, filterPayload
                     return photo.type === "video";
                 case "person": return photo.faceIds?.includes(filterPayload || "") || photo.faces?.includes(filterPayload || "");
                 case "album":
+                    // Albums chỉ áp dụng cho ảnh, loại bỏ video
+                    if (photo.type === "video") return false;
+
                     if (filterPayload === "scr") {
                         const path = (photo.filePath || "").toLowerCase();
                         const name = path.split(/[/\\]/).pop() || "";
@@ -47,7 +50,7 @@ export function FilteredGalleryView({ title, subtitle, filterType, filterPayload
                         const tag = filterPayload.replace("tag_", "");
                         return photo.labels?.map(l => l.toLowerCase()).includes(tag);
                     }
-                    if (filterPayload === "vid") return photo.type === "video";
+                    // Không có album riêng cho video; những filterPayload khác đều áp dụng trên ảnh
                     return true;
                 default:
                     return true;
@@ -78,7 +81,7 @@ export function FilteredGalleryView({ title, subtitle, filterType, filterPayload
                     </div>
                 ) : (
                     <div className="mb-8">
-                        <div className="text-sm font-medium mb-4 text-muted-foreground">{filteredPhotos.length} ảnh và video</div>
+                        <div className="text-sm font-medium mb-4 text-muted-foreground">{filteredPhotos.length} mục</div>
                         <PhotoGrid
                             photos={filteredPhotos}
                             onPhotoClick={setSelectedPhoto}
