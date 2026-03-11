@@ -46,14 +46,15 @@ jobs:
         uses: actions/cache@v4
         with:
           path: C:\vcpkg\installed
-          key: ${{ runner.os }}-vcpkg-opencv4-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-vcpkg-opencv4-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-vcpkg-opencv4-
 
       - name: Cache Rust Cargo
         uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          workspaces: "src-tauri -> target"
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
 
       - name: Install LLVM and Clang
         run: choco install llvm --yes
