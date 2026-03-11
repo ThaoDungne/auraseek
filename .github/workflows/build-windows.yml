@@ -59,6 +59,35 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-vcpkg-opencv4-
 
+      - name: Cache vcpkg archives (binary cache)
+        uses: actions/cache@v4
+        with:
+          path: C:\Users\runneradmin\AppData\Local\vcpkg\archives
+          key: ${{ runner.os }}-vcpkg-archives-${{ hashFiles('src-tauri/Cargo.lock', '.github/workflows/build-windows.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-vcpkg-archives-
+
+      - name: Cache vcpkg downloads
+        uses: actions/cache@v4
+        with:
+          path: C:\vcpkg\downloads
+          key: ${{ runner.os }}-vcpkg-downloads-${{ hashFiles('src-tauri/Cargo.lock', '.github/workflows/build-windows.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-vcpkg-downloads-
+
+      - name: Check OpenCV in vcpkg
+        id: opencv-check
+        shell: pwsh
+        run: |
+          $libDir = "C:\vcpkg\installed\x64-windows\lib"
+          $found = $false
+          if (Test-Path $libDir) {
+            $lib = Get-ChildItem -Path $libDir -Filter "opencv_world*.lib" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($lib) { $found = $true }
+          }
+          "found=$found" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "opencv_world present: $found"
+
       - name: Cache Rust Cargo
         uses: Swatinem/rust-cache@v2
         with:
@@ -70,12 +99,12 @@ jobs:
         shell: powershell
 
       - name: Install OpenCV with vcpkg
-        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        if: steps.opencv-check.outputs.found != 'true'
         env:
           VCPKG_INSTALLATION_ROOT: C:\vcpkg
           VCPKG_ROOT: C:\vcpkg
         run: |
-          vcpkg install opencv4[contrib,nonfree]:x64-windows
+          vcpkg install "opencv4[contrib,nonfree,world]:x64-windows"
           vcpkg integrate install
         shell: bash
 
@@ -86,13 +115,22 @@ jobs:
           $libDir = Join-Path $vcpkgRoot "installed\x64-windows\lib"
           if (-not (Test-Path $libDir)) { throw "vcpkg lib dir not found: $libDir" }
           $lib = Get-ChildItem -Path $libDir -Filter "opencv_world*.lib" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $lib) { throw "No opencv_world*.lib found in $libDir" }
-          $baseName = [System.IO.Path]::GetFileNameWithoutExtension($lib.Name)
-          Write-Host "Using OpenCV lib: $baseName from $libDir"
+          if ($lib) {
+            $baseName = [System.IO.Path]::GetFileNameWithoutExtension($lib.Name)
+            $linkLibs = $baseName
+            Write-Host "Using OpenCV world lib: $baseName from $libDir"
+          } else {
+            # Fallback: some builds may not produce opencv_world*.lib; link all opencv_*.lib
+            $libs = Get-ChildItem -Path $libDir -Filter "opencv_*.lib" -ErrorAction SilentlyContinue
+            if (-not $libs -or $libs.Count -eq 0) { throw "No opencv_*.lib found in $libDir" }
+            $names = $libs | ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_.Name) }
+            $linkLibs = ($names -join ";")
+            Write-Host "opencv_world not found; falling back to linking ${($libs.Count)} libs"
+          }
           "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "VCPKG_INSTALLATION_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "VCPKGRS_DYNAMIC=1" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "OPENCV_LINK_LIBS=$baseName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "OPENCV_LINK_LIBS=$linkLibs" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "OPENCV_LINK_PATHS=$libDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Install Frontend Dependencies
