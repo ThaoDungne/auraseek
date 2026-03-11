@@ -45,7 +45,7 @@ jobs:
       - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@v2
         with:
-          version: "16.0"
+          version: "18.0" # MSVC headers currently require newer Clang, 18.0/19.0 is more stable. If 18.0 fails, you can try "19.0"
 
       - name: Install OpenCV with vcpkg
         run: |
