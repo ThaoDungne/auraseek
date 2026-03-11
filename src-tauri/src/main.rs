@@ -21,11 +21,6 @@ use ingest::image_ingest::IngestSummary;
 use search::pipeline::{SearchPipeline, SearchQuery};
 use utils::logger::Logger;
 
-use notify::{RecommendedWatcher};
-use notify_debouncer_full::{Debouncer, FileIdMap};
-
-type AppWatcher = Debouncer<RecommendedWatcher, FileIdMap>;
-
 // ─── Sync status ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -100,7 +95,7 @@ struct VideoQuery {
 
 async fn stream_video(Query(q): Query<VideoQuery>, req: Request) -> Response {
     use tower::ServiceExt;
-    let mut service = tower_http::services::ServeFile::new(&q.path);
+    let service = tower_http::services::ServeFile::new(&q.path);
     match service.oneshot(req).await {
         Ok(res) => res.into_response(),
         Err(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -847,7 +842,8 @@ async fn run_search(
 
 // ─── Path helpers ────────────────────────────────────────────────────────────
 
-/// Return the current user's home directory.
+/// Return the current user's home directory (used on non-Windows for app data dir).
+#[cfg(not(windows))]
 fn dirs_home() -> std::path::PathBuf {
     std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))

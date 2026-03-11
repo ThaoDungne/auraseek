@@ -42,7 +42,16 @@ jobs:
           Invoke-WebRequest -Uri $WindowsUrl -OutFile "src-tauri/binaries/surreal-x86_64-pc-windows-msvc.exe"
           Write-Host "Download successful."
 
+      - name: Set VCPKG root for cache consistency
+        shell: pwsh
+        run: |
+          $root = "C:\vcpkg"
+          "VCPKG_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "VCPKG_INSTALLATION_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "VCPKG root set to $root (cache will use $root\installed)"
+
       - name: Cache vcpkg
+        id: vcpkg-cache
         uses: actions/cache@v4
         with:
           path: C:\vcpkg\installed
@@ -61,18 +70,30 @@ jobs:
         shell: powershell
 
       - name: Install OpenCV with vcpkg
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        env:
+          VCPKG_INSTALLATION_ROOT: C:\vcpkg
+          VCPKG_ROOT: C:\vcpkg
         run: |
           vcpkg install opencv4[contrib,nonfree]:x64-windows
           vcpkg integrate install
         shell: bash
 
-      - name: Set OpenCV Environment Variables
+      - name: Set OpenCV Environment Variables (auto-detect lib)
+        shell: pwsh
         run: |
-          echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> $GITHUB_ENV
-          echo "VCPKGRS_DYNAMIC=1" >> $GITHUB_ENV
-          echo "OPENCV_LINK_LIBS=opencv_world410" >> $GITHUB_ENV
-          echo "OPENCV_LINK_PATHS=$VCPKG_INSTALLATION_ROOT\installed\x64-windows\lib" >> $GITHUB_ENV
-        shell: bash
+          $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } else { "C:\vcpkg" }
+          $libDir = Join-Path $vcpkgRoot "installed\x64-windows\lib"
+          if (-not (Test-Path $libDir)) { throw "vcpkg lib dir not found: $libDir" }
+          $lib = Get-ChildItem -Path $libDir -Filter "opencv_world*.lib" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $lib) { throw "No opencv_world*.lib found in $libDir" }
+          $baseName = [System.IO.Path]::GetFileNameWithoutExtension($lib.Name)
+          Write-Host "Using OpenCV lib: $baseName from $libDir"
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "VCPKG_INSTALLATION_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "VCPKGRS_DYNAMIC=1" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "OPENCV_LINK_LIBS=$baseName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "OPENCV_LINK_PATHS=$libDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Install Frontend Dependencies
         run: yarn install
