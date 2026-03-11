@@ -76,6 +76,29 @@ jobs:
           vcpkg install opencv4[contrib,nonfree,opencl]:x64-windows
           vcpkg integrate install
 
+      - name: Copy OpenCV runtime DLLs into binaries
+        shell: pwsh
+        run: |
+          $src = "C:\vcpkg\installed\x64-windows\bin"
+          $dst = "src-tauri\binaries"
+          New-Item -Path $dst -ItemType Directory -Force | Out-Null
+          $dlls = @(
+            "opencv_core4.dll",
+            "opencv_imgcodecs4.dll",
+            "opencv_imgproc4.dll",
+            "opencv_dnn4.dll",
+            "opencv_objdetect4.dll",
+            "opencv_highgui4.dll"
+          )
+          foreach ($dll in $dlls) {
+            $from = Join-Path $src $dll
+            if (Test-Path $from) {
+              Copy-Item $from (Join-Path $dst $dll) -Force
+            } else {
+              Write-Host "Warning: $from not found"
+            }
+          }
+
       # ---------- SET ENV ----------
 
       - name: Set OpenCV ENV

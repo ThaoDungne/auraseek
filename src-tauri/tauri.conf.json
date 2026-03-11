@@ -39,8 +39,19 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "nsis/hooks.nsh"
+      }
+    },
     "externalBin": [
-      "binaries/surreal"
+      "binaries/surreal",
+      "binaries/opencv_core4.dll",
+      "binaries/opencv_imgcodecs4.dll",
+      "binaries/opencv_imgproc4.dll",
+      "binaries/opencv_dnn4.dll",
+      "binaries/opencv_objdetect4.dll",
+      "binaries/opencv_highgui4.dll"
     ],
     "linux": {
       "deb": {
