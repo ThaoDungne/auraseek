@@ -146,7 +146,10 @@ impl SurrealDb {
             DEFINE FIELD IF NOT EXISTS favorite     ON media TYPE bool DEFAULT false;
             DEFINE FIELD IF NOT EXISTS deleted_at   ON media TYPE option<datetime>;
             DEFINE FIELD IF NOT EXISTS is_hidden    ON media TYPE bool DEFAULT false;
-            DEFINE INDEX IF NOT EXISTS idx_sha256   ON media FIELDS file.sha256 UNIQUE;
+            DEFINE FIELD IF NOT EXISTS thumbnail    ON media TYPE option<string>;
+            -- SHA-256 được dùng cho chức năng \"Khử trùng lặp\" nhưng KHÔNG còn
+            -- ép uniqueness nữa, để cho phép lưu nhiều bản sao giống hệt nhau.
+            DEFINE INDEX IF NOT EXISTS idx_sha256   ON media FIELDS file.sha256;
             DEFINE INDEX IF NOT EXISTS idx_created  ON media FIELDS metadata.created_at;
 
             -- Migration for existing records

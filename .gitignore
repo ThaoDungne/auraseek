@@ -25,3 +25,5 @@ dist-ssr
 
 auraseek_data/*
 src-tauri/binaries/*
+src-tauri/input1/*
+src-tauri/output/*

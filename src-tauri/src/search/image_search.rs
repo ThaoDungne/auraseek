@@ -8,8 +8,11 @@ pub fn encode_image_query(
     engine: &mut AuraSeekEngine,
     image_path: &str,
 ) -> Result<Vec<f32>> {
+    crate::log_info!("🔍 [encode_image_query] path='{}'", image_path);
     let blob = preprocess_aura(image_path)?;
-    engine.aura.encode_image(blob, 256, 256)
+    let emb = engine.aura.encode_image(blob, 256, 256)?;
+    crate::log_info!("🔍 [encode_image_query] dims={}", emb.len());
+    Ok(emb)
 }
 
 pub async fn search_by_image_embedding(

@@ -100,11 +100,24 @@ export function AppTopbar({
     }
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const path = (file as any).path || file.name;
-    onSearchImageChange?.(path);
+
+    try {
+      // Đọc bytes từ File (browser API)
+      const arrayBuffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+
+      // Gửi bytes sang backend để lưu file tạm, backend trả về đường dẫn tuyệt đối.
+      const ext = file.name.split(".").pop() || "jpg";
+      const tmpPath = await AuraSeekApi.saveSearchImageTmp(Array.from(bytes), ext);
+
+      onSearchImageChange?.(tmpPath);
+      (window as any).__AURASEEK_SEARCH_TMP_PATH__ = tmpPath;
+    } catch (err) {
+      console.error("[AuraSeek] ❌ Error saving temp search image:", err);
+    }
   };
 
   const clearSearch = () => {

@@ -23,8 +23,8 @@ pub struct EngineOutput {
 
 fn default_config() -> EngineConfig {
     EngineConfig {
-        vision_path:  "assets/models/vision_tower_aura.onnx".into(),
-        text_path:    "assets/models/text_tower_aura.onnx".into(),
+        vision_path:  "assets/models/vision_vi-sclir.onnx".into(),
+        text_path:    "assets/models/text_vi-sclir.onnx".into(),
         yolo_path:    "assets/models/yolo26n-seg.onnx".into(),
         yunet_path:   "assets/models/face_detection_yunet_2022mar.onnx".into(),
         sface_path:   "assets/models/face_recognition_sface_2021dec.onnx".into(),
@@ -48,8 +48,8 @@ pub struct EngineConfig {
 impl EngineConfig {
     pub fn new_with_dir(base: &std::path::Path) -> Self {
         Self {
-            vision_path: base.join("models/vision_tower_aura.onnx").to_string_lossy().into_owned(),
-            text_path: base.join("models/text_tower_aura.onnx").to_string_lossy().into_owned(),
+            vision_path: base.join("models/vision_vi-sclir.onnx").to_string_lossy().into_owned(),
+            text_path: base.join("models/text_vi-sclir.onnx").to_string_lossy().into_owned(),
             yolo_path: base.join("models/yolo26n-seg.onnx").to_string_lossy().into_owned(),
             yunet_path: base.join("models/face_detection_yunet_2022mar.onnx").to_string_lossy().into_owned(),
             sface_path: base.join("models/face_recognition_sface_2021dec.onnx").to_string_lossy().into_owned(),
@@ -158,7 +158,10 @@ impl AuraSeekEngine {
             // Session face matching for unknown faces
             for f in faces.iter_mut() {
                 if f.face_id == "unknown_placeholder" {
-                    let mut best_score = 0.55;
+                    // Dùng cùng một COSINE_THRESHOLD như face_db để đảm bảo
+                    // behavior nhất quán: nếu bạn hạ threshold (vd 0.1),
+                    // các mặt có similarity > threshold sẽ về cùng group.
+                    let mut best_score = crate::model::face::COSINE_THRESHOLD;
                     let mut cached_id = None;
                     for (cached_emb, id) in &self.session_faces {
                         let score = cosine_similarity(&f.embedding, cached_emb);

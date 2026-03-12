@@ -43,6 +43,7 @@ export interface SearchResult {
     detected_faces: DetectedFace[];
     width: number | null;
     height: number | null;
+    thumbnail_path?: string;
 }
 
 export interface TimelineItem {
@@ -58,6 +59,7 @@ export interface TimelineItem {
     favorite: boolean;
     detected_objects: DetectedObject[];
     detected_faces: DetectedFace[];
+    thumbnail_path?: string;
 }
 
 export interface TimelineGroup {
@@ -82,6 +84,7 @@ export interface DuplicateItem {
     media_id: string;
     file_path: string;
     size: number;
+    thumbnail_path?: string;
 }
 
 export interface DuplicateGroup {
@@ -188,8 +191,8 @@ export const AuraSeekApi = {
         return invoke<void>("cmd_name_person", { faceId, name });
     },
 
-    async getDuplicates(): Promise<DuplicateGroup[]> {
-        return invoke<DuplicateGroup[]>("cmd_get_duplicates");
+    async getDuplicates(mediaType?: "image" | "video"): Promise<DuplicateGroup[]> {
+        return invoke<DuplicateGroup[]>("cmd_get_duplicates", { mediaType });
     },
 
     async getSearchHistory(limit?: number): Promise<any[]> {
@@ -285,6 +288,16 @@ export const AuraSeekApi = {
     async getFileSize(path: string): Promise<number> {
         return invoke<number>("cmd_get_file_size", { path });
     },
+
+    /** Lưu ảnh search tạm trên BE, trả về absolute path. */
+    async saveSearchImageTmp(data: number[], ext: string): Promise<string> {
+        return invoke<string>("cmd_save_search_image", { data, ext });
+    },
+
+    /** Xoá file tạm (nếu tồn tại). */
+    async deleteFile(path: string): Promise<void> {
+        return invoke<void>("cmd_delete_file", { path });
+    },
 };
 
 export function localFileUrl(filePath: string): string {
@@ -298,4 +311,44 @@ export function localFileUrl(filePath: string): string {
         const encoded = encodeURIComponent(filePath).replace(/%2F/g, "/").replace(/%5C/g, "/");
         return `asset://localhost/${encoded}`;
     }
+}
+
+/**
+ * A cached stream port, populated lazily.
+ * Pass any absolute path — it gets served by the local Axum HTTP server.
+ * Use this for paths outside source_dir (e.g. thumbnail cache dir) where
+ * the Tauri asset:// protocol may have restricted or inconsistent access.
+ */
+let _cachedStreamPort: number | null = null;
+async function getStreamPort(): Promise<number> {
+    if (_cachedStreamPort !== null) return _cachedStreamPort;
+    _cachedStreamPort = await AuraSeekApi.getStreamPort();
+    return _cachedStreamPort!;
+}
+
+/**
+ * Returns a URL that serves `filePath` via the local Axum stream server.
+ * Falls back to `localFileUrl` (asset://) if we can't get the port.
+ */
+export async function streamFileUrl(filePath: string): Promise<string> {
+    if (!filePath) return "";
+    try {
+        const port = await getStreamPort();
+        return `http://127.0.0.1:${port}/stream?path=${encodeURIComponent(filePath)}`;
+    } catch {
+        return localFileUrl(filePath);
+    }
+}
+
+/**
+ * Synchronous version — returns an HTTP stream URL if the port is already warm,
+ * otherwise falls back to asset:// (localFileUrl).
+ * Call AuraSeekApi.getStreamPort() or streamFileUrl() once at startup to warm the cache.
+ */
+export function streamFileUrlSync(filePath: string): string {
+    if (!filePath) return "";
+    if (_cachedStreamPort !== null) {
+        return `http://127.0.0.1:${_cachedStreamPort}/stream?path=${encodeURIComponent(filePath)}`;
+    }
+    return localFileUrl(filePath);
 }

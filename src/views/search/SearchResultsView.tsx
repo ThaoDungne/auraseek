@@ -2,8 +2,10 @@ import { useState, useRef, useEffect } from "react";
 import { ArrowLeft, Sparkles, SortAsc, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { SearchResult } from "@/lib/api";
-import { localFileUrl } from "@/lib/api";
+import { localFileUrl, streamFileUrlSync } from "@/lib/api";
 import { SegmentOverlay } from "@/components/photos/SegmentOverlay";
+import { FullScreenViewer } from "@/components/photo-detail/FullScreenViewer";
+import type { Photo } from "@/types/photo.type";
 
 interface SearchResultsViewProps {
     results: SearchResult[];
@@ -13,7 +15,7 @@ interface SearchResultsViewProps {
 }
 
 export function SearchResultsView({ results, query, isLoading, onBack }: SearchResultsViewProps) {
-    const [selectedId, setSelectedId] = useState<string | null>(null);
+    const [selectedPhoto, setSelectedPhoto] = useState<Photo | null>(null);
 
     if (isLoading) {
         return (
@@ -70,13 +72,49 @@ export function SearchResultsView({ results, query, isLoading, onBack }: SearchR
                             <SearchResultCard
                                 key={result.media_id}
                                 result={result}
-                                isSelected={selectedId === result.media_id}
-                                onClick={() => setSelectedId(result.media_id === selectedId ? null : result.media_id)}
+                                isSelected={selectedPhoto?.id === result.media_id}
+                                onClick={() => {
+                                    const isVideo = result.media_type === "video";
+                                    let thumbnailUrl = undefined;
+                                    if (isVideo && result.thumbnail_path) {
+                                        if (result.thumbnail_path.startsWith("/") || result.thumbnail_path.match(/^[A-Za-z]:\\/)) {
+                                            thumbnailUrl = streamFileUrlSync(result.thumbnail_path);
+                                        } else {
+                                            thumbnailUrl = localFileUrl(result.thumbnail_path);
+                                        }
+                                    }
+
+                                    setSelectedPhoto({
+                                        id: result.media_id,
+                                        url: localFileUrl(result.file_path),
+                                        takenAt: result.metadata.created_at || new Date().toISOString(),
+                                        createdAt: result.metadata.created_at || new Date().toISOString(),
+                                        sizeBytes: 0,
+                                        width: result.width || 0,
+                                        height: result.height || 0,
+                                        objects: result.metadata.objects || [],
+                                        faces: result.metadata.faces || [],
+                                        type: isVideo ? "video" : "photo",
+                                        labels: result.metadata.objects || [],
+                                        favorite: false, // Default since it's not currently tracked in SearchResult
+                                        detectedObjects: result.detected_objects || [],
+                                        detectedFaces: result.detected_faces || [],
+                                        thumbnailUrl,
+                                        filePath: result.file_path,
+                                    });
+                                }}
                             />
                         ))}
                     </div>
                 )}
             </div>
+
+            {selectedPhoto && (
+                <FullScreenViewer
+                    photo={selectedPhoto}
+                    onClose={() => setSelectedPhoto(null)}
+                />
+            )}
         </div>
     );
 }
@@ -92,8 +130,8 @@ function SearchResultCard({
 }) {
     const isVideo = result.media_type === "video";
     const [imgError, setImgError] = useState(false);
-    const [hovered,  setHovered]  = useState(false);
-    const imgRef   = useRef<HTMLImageElement>(null);
+    const [hovered, setHovered] = useState(false);
+    const imgRef = useRef<HTMLImageElement>(null);
     const [displayW, setDisplayW] = useState(0);
     const [displayH, setDisplayH] = useState(0);
     const [activeObjectIndex, setActiveObjectIndex] = useState<number | null>(null);
@@ -113,15 +151,20 @@ function SearchResultCard({
     const hasOverlays =
         !isVideo && (
             (result.detected_objects && result.detected_objects.length > 0) ||
-            (result.detected_faces   && result.detected_faces.length   > 0)
+            (result.detected_faces && result.detected_faces.length > 0)
         );
 
-    const imgNaturalW = result.width  || imgRef.current?.naturalWidth  || 0;
+    const imgNaturalW = result.width || imgRef.current?.naturalWidth || 0;
     const imgNaturalH = result.height || imgRef.current?.naturalHeight || 0;
-    // For videos show the static thumbnail (stem + .thumb.jpg)
-    const src = isVideo
-        ? localFileUrl(result.file_path.replace(/\.[^.]+$/, ".thumb.jpg"))
-        : localFileUrl(result.file_path);
+    // For videos use the provided thumbnail_path
+    let src = localFileUrl(result.file_path);
+    if (isVideo && result.thumbnail_path) {
+        if (result.thumbnail_path.startsWith("/") || result.thumbnail_path.match(/^[A-Za-z]:\\/)) {
+            src = streamFileUrlSync(result.thumbnail_path);
+        } else {
+            src = localFileUrl(result.thumbnail_path);
+        }
+    }
 
     // Xác định object đang được hover dựa trên toạ độ chuột và bbox
     const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -183,9 +226,8 @@ function SearchResultCard({
             onMouseEnter={() => setHovered(true)}
             onMouseMove={handleMouseMove}
             onMouseLeave={handleMouseLeave}
-            className={`relative group cursor-pointer rounded-xl overflow-hidden aspect-square transition-all duration-200 ${
-                isSelected ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : "hover:scale-[1.02]"
-            }`}
+            className={`relative group cursor-pointer rounded-xl overflow-hidden aspect-square transition-all duration-200 ${isSelected ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : "hover:scale-[1.02]"
+                }`}
         >
             {imgError ? (
                 <div className="w-full h-full bg-muted flex items-center justify-center">

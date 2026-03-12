@@ -9,10 +9,14 @@ use opencv::{
 use crate::processor::vision::face_image::FaceDb;
 use crate::log_info;
 
-const SCORE_THRESHOLD: f32 = 0.95; 
+const SCORE_THRESHOLD: f32 = 0.93; 
 const NMS_THRESHOLD: f32 = 0.3;
-const TOP_K: i32 = 5000;
-const COSINE_THRESHOLD: f32 = 0.36;
+const TOP_K: i32 = 500000;
+/// Cosine similarity threshold for face identity matching.
+/// Dùng chung cho:
+/// - so khớp với face_db (FaceDb::query_id)
+/// - gom nhóm các mặt "unknown" trong cùng session (session_faces)
+pub const COSINE_THRESHOLD: f32 = 0.33;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct FaceGroup {
@@ -138,8 +142,26 @@ impl FaceModel {
         let ratio_y = if target_h > 0.0 { h / target_h } else { 1.0 };
 
         for face in kept.into_iter() {
+            // Map the 14 geometry features from 320x320 space back to original `frame` resolution
+            // to extract highest-quality face embeddings.
+            let mut scaled_row = face.row.try_clone()?;
+            *scaled_row.at_2d_mut::<f32>(0, 0)? *= ratio_x;
+            *scaled_row.at_2d_mut::<f32>(0, 1)? *= ratio_y;
+            *scaled_row.at_2d_mut::<f32>(0, 2)? *= ratio_x;
+            *scaled_row.at_2d_mut::<f32>(0, 3)? *= ratio_y;
+            *scaled_row.at_2d_mut::<f32>(0, 4)? *= ratio_x;
+            *scaled_row.at_2d_mut::<f32>(0, 5)? *= ratio_y;
+            *scaled_row.at_2d_mut::<f32>(0, 6)? *= ratio_x;
+            *scaled_row.at_2d_mut::<f32>(0, 7)? *= ratio_y;
+            *scaled_row.at_2d_mut::<f32>(0, 8)? *= ratio_x;
+            *scaled_row.at_2d_mut::<f32>(0, 9)? *= ratio_y;
+            *scaled_row.at_2d_mut::<f32>(0, 10)? *= ratio_x;
+            *scaled_row.at_2d_mut::<f32>(0, 11)? *= ratio_y;
+            *scaled_row.at_2d_mut::<f32>(0, 12)? *= ratio_x;
+            *scaled_row.at_2d_mut::<f32>(0, 13)? *= ratio_y;
+
             let mut aligned = Mat::default();
-            self.recognizer.align_crop(&resized, &face.row, &mut aligned)?;
+            self.recognizer.align_crop(frame, &scaled_row, &mut aligned)?;
             
             let mut feature = Mat::default();
             self.recognizer.feature(&aligned, &mut feature)?;
@@ -170,6 +192,90 @@ impl FaceModel {
     pub fn detect_from_path(&mut self, path: &str, db: &FaceDb) -> Result<Vec<FaceGroup>> {
         let frame = imread(path, IMREAD_COLOR)?;
         self.detect_from_mat(&frame, db)
+    }
+
+    /// Same as `detect_from_mat` but also returns the aligned Mat crop (112×112)
+    /// for each detected face, so callers can save it for debugging.
+    pub fn detect_from_mat_with_aligned(
+        &mut self,
+        frame: &Mat,
+        db: &FaceDb,
+    ) -> Result<Vec<(FaceGroup, Mat)>> {
+        if frame.empty() { return Ok(vec![]); }
+        let size = frame.size()?;
+        let (w, h) = (size.width as f32, size.height as f32);
+        if w < 20.0 || h < 20.0 { return Ok(vec![]); }
+
+        let target_size = self.detector_size;
+        let mut resized = Mat::default();
+        opencv::imgproc::resize(frame, &mut resized, target_size, 0.0, 0.0, opencv::imgproc::INTER_LINEAR)?;
+
+        let mut faces_mat = Mat::default();
+        self.detector.detect(&resized, &mut faces_mat)?;
+        if faces_mat.rows() <= 0 { return Ok(vec![]); }
+
+        let mut raw_faces = Vec::new();
+        for i in 0..faces_mat.rows() {
+            let row_ref = faces_mat.row(i)?;
+            let score = *row_ref.at_2d::<f32>(0, 14)?;
+            if score < SCORE_THRESHOLD { continue; }
+            raw_faces.push(YuNetFace {
+                row: row_ref.try_clone()?,
+                bbox: [
+                    *row_ref.at_2d::<f32>(0, 0)?,
+                    *row_ref.at_2d::<f32>(0, 1)?,
+                    *row_ref.at_2d::<f32>(0, 2)?,
+                    *row_ref.at_2d::<f32>(0, 3)?,
+                ],
+                score,
+            });
+        }
+        raw_faces.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        let mut kept: Vec<YuNetFace> = Vec::new();
+        for f in raw_faces {
+            let mut overlap = false;
+            for k in &kept {
+                if calc_iou(&f.bbox, &k.bbox) > 0.3 { overlap = true; break; }
+            }
+            if !overlap { kept.push(f); }
+        }
+
+        let target_w = self.detector_size.width as f32;
+        let target_h = self.detector_size.height as f32;
+        let ratio_x = if target_w > 0.0 { w / target_w } else { 1.0 };
+        let ratio_y = if target_h > 0.0 { h / target_h } else { 1.0 };
+
+        let mut out = Vec::new();
+        for face in kept {
+            let mut scaled_row = face.row.try_clone()?;
+            for col in [0usize, 4, 6, 8, 10, 12] { *scaled_row.at_2d_mut::<f32>(0, col as i32)? *= ratio_x; }
+            for col in [1usize, 5, 7, 9, 11, 13] { *scaled_row.at_2d_mut::<f32>(0, col as i32)? *= ratio_y; }
+            *scaled_row.at_2d_mut::<f32>(0, 2)? *= ratio_x;
+            *scaled_row.at_2d_mut::<f32>(0, 3)? *= ratio_y;
+
+            let mut aligned = Mat::default();
+            self.recognizer.align_crop(frame, &scaled_row, &mut aligned)?;
+            let mut feature = Mat::default();
+            self.recognizer.feature(&aligned, &mut feature)?;
+            let embedding = mat_to_vec_f32(&feature)?;
+            let (name, face_id) = match db.query_id(&embedding, COSINE_THRESHOLD) {
+                Some((n, id)) => (Some(n), id),
+                None => (None, "unknown_placeholder".to_string()),
+            };
+            out.push((FaceGroup {
+                face_id,
+                name,
+                conf: face.score,
+                bbox: [
+                    face.bbox[0] * ratio_x,
+                    face.bbox[1] * ratio_y,
+                    (face.bbox[0] + face.bbox[2]) * ratio_x,
+                    (face.bbox[1] + face.bbox[3]) * ratio_y,
+                ],
+                embedding,
+            }, aligned));
+        }
+        Ok(out)
     }
 
     pub fn extract_feature_for_db(&mut self, img_path: &str) -> Result<Vec<Vec<f32>>> {

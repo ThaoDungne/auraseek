@@ -11,8 +11,8 @@ const BASE_URL: &str =
 
 /// List of (filename, relative-path-under-data-dir) for every required asset.
 const ASSETS: &[(&str, &str)] = &[
-    ("text_tower_aura.onnx",                "models/text_tower_aura.onnx"),
-    ("vision_tower_aura.onnx",              "models/vision_tower_aura.onnx"),
+    ("text_vi-sclir.onnx",                "models/text_vi-sclir.onnx"),
+    ("vision_vi-sclir.onnx",              "models/vision_vi-sclir.onnx"),
     ("face_recognition_sface_2021dec.onnx", "models/face_recognition_sface_2021dec.onnx"),
     ("face_detection_yunet_2022mar.onnx",   "models/face_detection_yunet_2022mar.onnx"),
     ("yolo26n-seg.onnx",                    "models/yolo26n-seg.onnx"),

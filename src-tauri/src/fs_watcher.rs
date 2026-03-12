@@ -49,6 +49,7 @@ fn is_media_file(path: &PathBuf) -> bool {
 }
 
 /// Start watching `source_dir` for new media files.
+/// If `thumb_cache_dir` is Some, video/face thumbnails from new files are written there.
 ///
 /// Returns a handle that keeps the watcher alive; drop it to stop.
 pub fn start_watching(
@@ -56,6 +57,7 @@ pub fn start_watching(
     db: Arc<Mutex<Option<SurrealDb>>>,
     engine: Arc<Mutex<Option<AuraSeekEngine>>>,
     sync_status: Arc<Mutex<SyncStatus>>,
+    thumb_cache_dir: Option<PathBuf>,
 ) -> anyhow::Result<FsWatcherHandle> {
     let (event_tx, mut event_rx) = mpsc::channel::<PathBuf>(512);
     let (stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
@@ -141,11 +143,13 @@ pub fn start_watching(
                         continue;
                     }
 
+                    let thumb_cache = thumb_cache_dir.clone();
                     match image_ingest::ingest_files(
                         files.clone(),
                         dir_for_task.clone(),
                         db.clone(),
                         engine.clone(),
+                        thumb_cache,
                     ).await {
                         Ok(summary) => {
                             crate::log_info!(

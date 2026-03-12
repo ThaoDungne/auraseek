@@ -3,4 +3,4 @@ pub mod visualize;
 pub mod logger;
 
 pub use session::build_session;
-pub use logger::{GREEN, YELLOW, RED, CYAN, MAGENTA, BOLD, RESET};
+pub use logger::{GREEN, CYAN, MAGENTA, BOLD, RESET};
