@@ -15,7 +15,7 @@ import { FilteredGalleryView } from "@/views/gallery/FilteredGalleryView";
 import { SearchResultsView } from "@/views/search/SearchResultsView";
 import { FirstRunModal } from "@/components/common/FirstRunModal";
 import ModelDownloadScreen, { type ModelDownloadEvent } from "@/components/common/ModelDownloadScreen";
-import { AuraSeekApi, localFileUrl, streamFileUrl, type SearchResult, type TimelineGroup, type PersonGroup, type SearchFilters as ApiFilters, type SyncStatus } from "@/lib/api";
+import { AuraSeekApi, localFileUrl, streamFileUrl, warmStreamPortCache, type SearchResult, type TimelineGroup, type PersonGroup, type SearchFilters as ApiFilters, type SyncStatus } from "@/lib/api";
 import type { Photo } from "@/types/photo.type";
 
 type AppRoute = {
@@ -113,8 +113,8 @@ function App() {
         setInitError(null);
         setDownloadProgress(null); // hide loading screen now that engine is ready
 
-        // Pre-fetch stream port so thumbnail URLs can use it synchronously later
-        await AuraSeekApi.getStreamPort().catch(() => null);
+        // Warm stream port cache so `streamFileUrlSync()` can serve thumbnails reliably
+        await warmStreamPortCache();
 
         // Get source_dir from backend
         const dir = await AuraSeekApi.getSourceDir();

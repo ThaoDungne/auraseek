@@ -326,6 +326,15 @@ async function getStreamPort(): Promise<number> {
     return _cachedStreamPort!;
 }
 
+/** Warm the internal stream port cache used by `streamFileUrlSync()`. */
+export async function warmStreamPortCache(): Promise<void> {
+    try {
+        await getStreamPort();
+    } catch {
+        // ignore: callers will fall back to asset:// when cache is cold/unavailable
+    }
+}
+
 /**
  * Returns a URL that serves `filePath` via the local Axum stream server.
  * Falls back to `localFileUrl` (asset://) if we can't get the port.
