@@ -12,6 +12,7 @@ import { useState, useEffect } from "react";
 import { AuraSeekApi } from "@/lib/api";
 import { FullScreenTopBar } from "./FullScreenTopBar";
 import { openPath } from "@tauri-apps/plugin-opener";
+import { ConfirmDialog } from "../ui/ConfirmDialog";
 
 /** Ứng dụng mở video ngoài (Linux/macOS/Windows). */
 const EXTERNAL_VIDEO_APP = "cine";
@@ -32,6 +33,8 @@ export function FullScreenVideoViewer({
     const [isSharing, setIsSharing] = useState(false);
     const [videoError, setVideoError] = useState(false);
     const [streamUrl, setStreamUrl] = useState<string | null>(null);
+    const [isHardDeleteOpen, setIsHardDeleteOpen] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
 
     useEffect(() => {
         setIsFavorite(photo.favorite || false);
@@ -99,6 +102,20 @@ export function FullScreenVideoViewer({
         }
     };
 
+    const handleHardDelete = async () => {
+        try {
+            setIsDeleting(true);
+            await AuraSeekApi.hardDeleteTrashItem(photo.id);
+            window.dispatchEvent(new Event("refresh_photos"));
+            onClose();
+        } catch (e) {
+            console.error("Hard delete failed", e);
+        } finally {
+            setIsDeleting(false);
+            setIsHardDeleteOpen(false);
+        }
+    };
+
     const handleRestoreFromTrash = async () => {
         try {
             await AuraSeekApi.restoreFromTrash(photo.id);
@@ -158,6 +175,7 @@ export function FullScreenVideoViewer({
                     onRestoreFromTrash={handleRestoreFromTrash}
                     onUnhide={handleUnhide}
                     onMoveToTrash={handleMoveToTrash}
+                    onHardDelete={isTrashMode ? () => setIsHardDeleteOpen(true) : undefined}
                     isSharing={isSharing}
                     showInfo={showInfo}
                     onToggleInfo={() => setShowInfo((p) => !p)}
@@ -220,6 +238,17 @@ export function FullScreenVideoViewer({
                     </div>
                 </div>
             )}
+            
+            <ConfirmDialog
+                isOpen={isHardDeleteOpen}
+                title="Xóa vĩnh viễn video"
+                description="Bạn có chắc muốn xóa video này khỏi ổ đĩa không? Hành động này sẽ không thể hoàn tác."
+                confirmText="Xóa vĩnh viễn"
+                isDestructive
+                isLoading={isDeleting}
+                onConfirm={handleHardDelete}
+                onCancel={() => setIsHardDeleteOpen(false)}
+            />
         </div>
     );
 }

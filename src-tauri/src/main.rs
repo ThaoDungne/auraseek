@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod utils;
 mod model;
 mod processor;
@@ -67,6 +69,7 @@ pub struct AppState {
     /// is configured. Replaced when source_dir changes.
     pub watcher_handle: std::sync::Mutex<Option<fs_watcher::FsWatcherHandle>>,
     pub stream_port:   std::sync::atomic::AtomicU16,
+    pub abort_sync:    Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl AppState {
@@ -86,6 +89,7 @@ impl AppState {
             data_dir:       std::sync::Mutex::new(std::path::PathBuf::from(".")),
             watcher_handle: std::sync::Mutex::new(None),
             stream_port:    std::sync::atomic::AtomicU16::new(0),
+            abort_sync:     Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 }
@@ -132,6 +136,17 @@ fn spawn_stream_server() -> u16 {
 #[tauri::command]
 fn cmd_get_stream_port(state: tauri::State<'_, AppState>) -> u16 {
     state.stream_port.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+// Unused imports removed
+        
+#[macro_export]
+macro_rules! sdb_log_info {
+    ($($arg:tt)*) => ($crate::utils::logger::Logger::info(&format!("{}{}[SurrealDB]{}{} {}", GREEN, BOLD, RESET, RESET, format!($($arg)*))));
+}
+#[macro_export]
+macro_rules! sdb_log_warn {
+    ($($arg:tt)*) => ($crate::utils::logger::Logger::warn(&format!("{}{}[SurrealDB]{}{} {}", RED, BOLD, RESET, RESET, format!($($arg)*))));
 }
 
 // ─── RAM helper ──────────────────────────────────────────────────────────────
@@ -255,8 +270,9 @@ async fn cmd_init(state: State<'_, AppState>) -> Result<String, String> {
                 Ok(sdb) => {
                     // Start auto-purge trash worker in background
                     let sdb_clone = sdb.clone();
+                    let source_dir_clone = state.source_dir.lock().await.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = DbOperations::auto_purge_trash(&sdb_clone).await {
+                        if let Err(e) = DbOperations::auto_purge_trash(&sdb_clone, &source_dir_clone).await {
                             crate::log_warn!("Failed to auto-purge trash: {}", e);
                         }
                     });
@@ -379,6 +395,7 @@ async fn cmd_auto_scan(
     let thumb_cache_dir = state.data_dir.lock().unwrap().join("thumbnails");
     let thumb_cache = Some(thumb_cache_dir);
     let app_handle = app.clone();
+    let abort_flag = state.abort_sync.clone();
     tokio::spawn(async move {
         // Prune first
         if let Some(ref sdb) = *db_arc.lock().await {
@@ -386,7 +403,7 @@ async fn cmd_auto_scan(
         }
 
         let result = ingest::image_ingest::ingest_folder(
-            dir.clone(), db_arc, engine_arc, Some(app_handle), thumb_cache
+            dir.clone(), db_arc, engine_arc, Some(app_handle), thumb_cache, abort_flag
         ).await;
 
         let mut st = sync_arc.lock().await;
@@ -417,18 +434,45 @@ async fn cmd_auto_scan(
 
 #[tauri::command]
 async fn cmd_cleanup_database(state: State<'_, AppState>) -> Result<usize, String> {
-    let db_guard = state.db.lock().await;
-    let db = db_guard.as_ref().ok_or("DB not initialized")?;
     let source_dir = state.source_dir.lock().await.clone();
-    DbOperations::prune_missing_media(db, &source_dir).await.map_err(|e| e.to_string())
+    let db_guard = state.db.lock().await;
+    if let Some(ref sdb) = *db_guard {
+        let _ = DbOperations::auto_purge_trash(sdb, &source_dir).await;
+        let count = DbOperations::prune_missing_media(sdb, &source_dir).await.map_err(|e| e.to_string())?;
+        Ok(count)
+    } else {
+        Err("DB not initialized".into())
+    }
 }
 
 #[tauri::command]
 async fn cmd_reset_database(state: State<'_, AppState>) -> Result<(), String> {
+    // 0. Signal background sync to abort
+    state.abort_sync.store(true, std::sync::atomic::Ordering::SeqCst);
+    
+    // 1. Reset sync status to idle
+    {
+        let mut st = state.sync_status.lock().await;
+        *st = SyncStatus { state: "idle".into(), processed: 0, total: 0, message: "".into() };
+    }
+
+    // 2. Stop FS watcher
+    if let Ok(mut guard) = state.watcher_handle.lock() {
+        if let Some(handle) = guard.take() {
+            handle.stop();
+            crate::log_info!("👁️  FS watcher stopped due to database reset");
+        }
+    }
+
+    // 3. Clear Database
     let db_guard = state.db.lock().await;
     let db = db_guard.as_ref().ok_or("DB not initialized")?;
     DbOperations::clear_database(db).await.map_err(|e| e.to_string())?;
+
+    // 4. Clear source_dir in AppState
     *state.source_dir.lock().await = String::new();
+    
+    crate::log_info!("🧹 Database and configuration reset completed.");
     Ok(())
 }
 
@@ -442,7 +486,8 @@ async fn cmd_scan_folder(
     let engine_arc = state.engine.clone();
     let db_arc     = state.db.clone();
     let thumb_cache_dir = state.data_dir.lock().unwrap().join("thumbnails");
-    ingest::image_ingest::ingest_folder(source_path, db_arc, engine_arc, Some(app), Some(thumb_cache_dir))
+    let abort_flag = state.abort_sync.clone();
+    ingest::image_ingest::ingest_folder(source_path, db_arc, engine_arc, Some(app), Some(thumb_cache_dir), abort_flag)
         .await
         .map_err(|e| e.to_string())
 }
@@ -728,20 +773,54 @@ async fn cmd_name_person(
     DbOperations::name_person(db, &face_id, &name).await.map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn cmd_merge_people(
+    target_face_id: String,
+    source_face_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let db_guard = state.db.lock().await;
+    let db = db_guard.as_ref().ok_or("DB not initialized")?;
+    DbOperations::merge_people(db, &target_face_id, &source_face_id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn cmd_delete_person(
+    face_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let db_guard = state.db.lock().await;
+    let db = db_guard.as_ref().ok_or("DB not initialized")?;
+    DbOperations::delete_person(db, &face_id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn cmd_remove_face_from_person(
+    media_id: String,
+    face_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let db_guard = state.db.lock().await;
+    let db = db_guard.as_ref().ok_or("DB not initialized")?;
+    DbOperations::remove_face_from_person(db, &media_id, &face_id).await.map_err(|e| e.to_string())
+}
+
 // ─── Trash & Hidden ──────────────────────────────────────────────────────────
 
 #[tauri::command]
 async fn cmd_move_to_trash(media_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let source_dir = state.source_dir.lock().await.clone();
     let db_guard = state.db.lock().await;
     let db = db_guard.as_ref().ok_or("DB not initialized")?;
-    DbOperations::move_to_trash(db, &media_id).await.map_err(|e| e.to_string())
+    DbOperations::move_to_trash(db, &source_dir, &media_id).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn cmd_restore_from_trash(media_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let source_dir = state.source_dir.lock().await.clone();
     let db_guard = state.db.lock().await;
     let db = db_guard.as_ref().ok_or("DB not initialized")?;
-    DbOperations::restore_from_trash(db, &media_id).await.map_err(|e| e.to_string())
+    DbOperations::restore_from_trash(db, &source_dir, &media_id).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -754,9 +833,18 @@ async fn cmd_get_trash(state: State<'_, AppState>) -> Result<Vec<TimelineGroup>,
 
 #[tauri::command]
 async fn cmd_empty_trash(state: State<'_, AppState>) -> Result<(), String> {
+    let source_dir = state.source_dir.lock().await.clone();
     let db_guard = state.db.lock().await;
     let db = db_guard.as_ref().ok_or("DB not initialized")?;
-    DbOperations::empty_trash(db).await.map_err(|e| e.to_string())
+    DbOperations::empty_trash(db, &source_dir).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn cmd_hard_delete_trash_item(media_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let source_dir = state.source_dir.lock().await.clone();
+    let db_guard = state.db.lock().await;
+    let db = db_guard.as_ref().ok_or("DB not initialized")?;
+    DbOperations::hard_delete_trash_item(db, &source_dir, &media_id).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -820,11 +908,78 @@ async fn cmd_authenticate_os() -> Result<bool, String> {
         }
     }
     
-    // For other OS, simulate success or implement platform-specific auth
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    {
+        // Sử dụng ShellExecute "runas" qua PowerShell để kích hoạt hộp thoại UAC (Hỏi pass Windows)
+        match std::process::Command::new("powershell")
+            .args(&[
+                "-NoProfile",
+                "-WindowStyle", "Hidden",
+                "-Command",
+                "Start-Process cmd -ArgumentList '/c exit 0' -Verb RunAs -WindowStyle Hidden -Wait"
+            ])
+            .output()
+        {
+            Ok(output) => {
+                return Ok(output.status.success());
+            }
+            Err(e) => {
+                crate::log_warn!("Windows OS Auth failed: {}", e);
+                return Err("Lỗi kích hoạt xác thực Windows".to_string());
+            }
+        }
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         Ok(true)
     }
+}
+
+// ─── Custom Albums ─────────────────────────────────────────────────────────────
+
+#[tauri::command]
+async fn cmd_create_album(title: String, state: State<'_, AppState>) -> Result<String, String> {
+    let db_guard = state.db.lock().await;
+    let db = db_guard.as_ref().ok_or("DB not initialized")?;
+    DbOperations::create_album(db, title).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn cmd_get_albums(state: State<'_, AppState>) -> Result<Vec<crate::db::models::CustomAlbum>, String> {
+    let source_dir = state.source_dir.lock().await.clone();
+    let db_guard = state.db.lock().await;
+    let db = db_guard.as_ref().ok_or("DB not initialized")?;
+    DbOperations::get_albums(db, &source_dir).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn cmd_add_to_album(album_id: String, media_ids: Vec<String>, state: State<'_, AppState>) -> Result<(), String> {
+    let db_guard = state.db.lock().await;
+    let db = db_guard.as_ref().ok_or("DB not initialized")?;
+    DbOperations::add_to_album(db, &album_id, media_ids).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn cmd_remove_from_album(album_id: String, media_ids: Vec<String>, state: State<'_, AppState>) -> Result<(), String> {
+    let db_guard = state.db.lock().await;
+    let db = db_guard.as_ref().ok_or("DB not initialized")?;
+    DbOperations::remove_from_album(db, &album_id, media_ids).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn cmd_delete_album(album_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let db_guard = state.db.lock().await;
+    let db = db_guard.as_ref().ok_or("DB not initialized")?;
+    DbOperations::delete_album(db, &album_id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn cmd_get_album_photos(album_id: String, state: State<'_, AppState>) -> Result<Vec<TimelineGroup>, String> {
+    let source_dir = state.source_dir.lock().await.clone();
+    let db_guard = state.db.lock().await;
+    let db = db_guard.as_ref().ok_or("DB not initialized")?;
+    DbOperations::get_album_photos(db, &album_id, &source_dir).await.map_err(|e| e.to_string())
 }
 
 /// Find duplicate images.
@@ -969,6 +1124,36 @@ fn dirs_home() -> std::path::PathBuf {
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
+/// Ensures all necessary DLLs (OpenCV, MSVC) are present in the executable directory.
+/// This is a fallback to ensure the app runs on non-dev machines without global installs.
+fn ensure_dlls(app: &tauri::App) -> anyhow::Result<()> {
+    use tauri::Manager;
+    let resource_dir = app.path().resource_dir()?;
+    let exe_path = std::env::current_exe()?;
+    let exe_dir = exe_path.parent().ok_or_else(|| anyhow::anyhow!("Failed to get exe parent dir"))?;
+
+    let dlls = [
+        "opencv_world460.dll",
+        "opencv_videoio_ffmpeg460_64.dll",
+        "msvcp140.dll",
+        "vcruntime140.dll",
+        "concrt140.dll"
+    ];
+
+    for dll in &dlls {
+        let src = resource_dir.join("libs").join(dll);
+        let dst = exe_dir.join(dll);
+
+        if src.exists() && !dst.exists() {
+            crate::log_info!("📦 Deploying system DLL to exe dir: {}", dll);
+            if let Err(e) = std::fs::copy(&src, &dst) {
+                crate::log_warn!("⚠️ Failed to copy {}: {}", dll, e);
+            }
+        }
+    }
+    Ok(())
+}
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -988,6 +1173,9 @@ pub fn run() {
         // ── Start SurrealDB sidecar before any command runs ──────────────────
         .setup(|app| {
             use tauri::Manager;
+
+            // 1. Ensure DLLs are in the executable directory
+            let _ = ensure_dlls(app);
 
             let port = spawn_stream_server();
             app.state::<AppState>().stream_port.store(port, std::sync::atomic::Ordering::Relaxed);
@@ -1087,6 +1275,9 @@ pub fn run() {
             cmd_get_timeline,
             cmd_get_people,
             cmd_name_person,
+            cmd_merge_people,
+            cmd_delete_person,
+            cmd_remove_face_from_person,
             cmd_get_duplicates,
             cmd_get_distinct_objects,
             cmd_get_search_history,
@@ -1096,6 +1287,7 @@ pub fn run() {
             cmd_restore_from_trash,
             cmd_get_trash,
             cmd_empty_trash,
+            cmd_hard_delete_trash_item,
             cmd_hide_photo,
             cmd_unhide_photo,
             cmd_get_hidden_photos,
@@ -1103,6 +1295,13 @@ pub fn run() {
             cmd_cleanup_database,
             cmd_reset_database,
             cmd_get_stream_port,
+            // Albums
+            cmd_create_album,
+            cmd_get_albums,
+            cmd_add_to_album,
+            cmd_remove_from_album,
+            cmd_delete_album,
+            cmd_get_album_photos,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

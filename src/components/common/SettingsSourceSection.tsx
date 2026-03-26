@@ -30,6 +30,9 @@ export function SettingsSourceSection({
     setShowWarning,
     setError,
 }: SettingsSourceSectionProps) {
+    const isWindows = typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes("win");
+    const placeholderTxt = isWindows ? "C:\\Users\\Admin\\Pictures" : "/home/user/Pictures";
+
     const handleInputChange = (value: string) => {
         setSourceFolder(value);
         setShowWarning(false);
@@ -62,7 +65,7 @@ export function SettingsSourceSection({
                 type="text"
                 value={sourceFolder}
                 onChange={(e) => handleInputChange(e.target.value)}
-                placeholder="/home/user/Pictures"
+                placeholder={placeholderTxt}
                 className="flex h-10 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm font-mono"
             />
 

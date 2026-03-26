@@ -146,21 +146,6 @@ function App() {
     try {
       await AuraSeekApi.autoScan();
       setSyncStatus({ state: "syncing", processed: 0, total: 0, message: "Đang đồng bộ dữ liệu..." });
-      // Poll sync status
-      if (syncPollRef.current) clearInterval(syncPollRef.current);
-      syncPollRef.current = setInterval(async () => {
-        try {
-          const st = await AuraSeekApi.getSyncStatus();
-          setSyncStatus(st);
-          if (st.state === "done" || st.state === "error") {
-            if (syncPollRef.current) clearInterval(syncPollRef.current);
-            if (st.state === "done") {
-              await loadTimeline();
-              window.dispatchEvent(new Event("refresh_photos"));
-            }
-          }
-        } catch { }
-      }, 2000);
     } catch (e) {
       console.warn("[AuraSeek] ⚠️ Auto-scan failed:", e);
       setSyncStatus({ state: "error", processed: 0, total: 0, message: String(e) });
@@ -218,7 +203,34 @@ function App() {
     } catch (err) {
       console.warn("[AuraSeek] ⚠️ Timeline load failed:", err);
     }
-  }, []);
+  }, [localFileUrl, streamFileUrl]);
+
+  // Global perpetual SyncStatus poller (essential for fs_watcher background events)
+  useEffect(() => {
+    if (!isInitialized) return;
+    let lastState = syncStatus?.state;
+    const iv = setInterval(async () => {
+      try {
+        const st = await AuraSeekApi.getSyncStatus();
+        setSyncStatus(st);
+        if (st.state === "done" && lastState === "syncing") {
+          // Transitioned from syncing to done -> refreshing UI automatically
+          await loadTimeline();
+          window.dispatchEvent(new Event("refresh_photos"));
+        }
+        lastState = st.state;
+      } catch { }
+    }, 2000);
+    return () => clearInterval(iv);
+  }, [isInitialized, loadTimeline, syncStatus?.state]);
+
+  const handleReload = useCallback(() => {
+    if (syncStatus && syncStatus.state === "error") {
+      setSyncStatus({ state: "idle", processed: 0, total: 0, message: "" });
+    }
+    loadTimeline();
+    triggerAutoScan();
+  }, [loadTimeline, triggerAutoScan, syncStatus]);
 
   const loadPeople = useCallback(async () => {
     try {
@@ -290,12 +302,15 @@ function App() {
           const ext = mimeToExt(f.type);
           const s = await AuraSeekApi.ingestImageData(b64, ext);
           newCount += s.newly_added;
-        } catch (e) { console.warn("[AuraSeek] ingestImageData failed:", e); }
+        } catch (e) { console.warn("[AuraSeek] ingest blob failed:", e); }
       }
 
       if (newCount > 0) {
-        console.log("[AuraSeek] ✅ Ingested", newCount, "new images — refreshing timeline");
+        console.log(`[AuraSeek] ✅ Added ${newCount} new files.`);
         await loadTimeline();
+        window.dispatchEvent(new Event("refresh_photos"));
+      } else {
+        console.log("[AuraSeek] ⚠️ No new files added or all were duplicates.");
       }
     };
 
@@ -580,6 +595,7 @@ function App() {
               selectionMode={selectionMode}
               onSelectionModeChange={setSelectionMode}
               syncStatus={syncStatus}
+              onReload={handleReload}
             />
             {renderView()}
           </main>

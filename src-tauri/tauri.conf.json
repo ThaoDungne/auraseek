@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "AuraSeek",
   "version": "1.0.0",
-  "identifier": "com.aienthusiasm.auraseek",
+  "identifier": "aienthusiasm.auraseek",
   "build": {
     "beforeDevCommand": "yarn dev",
     "devUrl": "http://localhost:1422",
@@ -39,9 +39,25 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": [
-      "binaries/surreal"
-    ],
+    "externalBin": [],
+    "resources": {
+      "libs/opencv_world460.dll": "opencv_world460.dll",
+      "libs/opencv_videoio_ffmpeg460_64.dll": "opencv_videoio_ffmpeg460_64.dll",
+      "libs/msvcp140.dll": "msvcp140.dll",
+      "libs/vcruntime140.dll": "vcruntime140.dll",
+      "libs/concrt140.dll": "concrt140.dll"
+    },
+    "windows": {
+      "wix": {
+        "language": "vi-VN"
+      },
+      "nsis": {
+        "languages": [
+          "Vietnamese"
+        ],
+        "displayLanguageSelector": true
+      }
+    },
     "linux": {
       "deb": {
         "depends": [

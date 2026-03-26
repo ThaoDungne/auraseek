@@ -2,7 +2,7 @@
 name = "auraseek"
 version = "1.0.0"
 description = "AuraSeek"
-authors = ["AI Enthusiasm"]
+authors = ["AIEnthusiasm team"]
 edition = "2024"
 
 [dependencies]
@@ -35,6 +35,9 @@ notify             = "7"
 axum = "0.7"
 tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.5", features = ["fs", "cors"] }
+flate2 = "1.0"
+tar = "0.4"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 ureq        = "2.9"

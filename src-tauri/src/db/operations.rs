@@ -2,9 +2,10 @@
 /// All vector search uses SurrealDB's built-in vector::similarity::cosine
 use anyhow::Result;
 use crate::db::surreal::SurrealDb;
-use crate::db::models::*;
+use crate::db::models::{SearchResult, SearchResultMeta, TimelineItem, TimelineGroup, PersonGroup, SearchFilters, SearchHistoryDoc, SearchHistoryRow, DuplicateGroup, DuplicateItem, CustomAlbum, MediaRow, DetectedObject, BboxInfo, DetectedFace, MediaDoc, IdOnly, ObjectEntry, FaceEntry, PersonDoc};
 use std::collections::HashMap;
 use surrealdb::types::{RecordId, RecordIdKey, SurrealValue};
+use chrono::Datelike;
 
 const DUPLICATE_THRESHOLD: f32 = 0.92;
 
@@ -48,7 +49,7 @@ pub fn row_to_search_result(row: &MediaRow, score: f32, source_dir: &str) -> Sea
         metadata: SearchResultMeta {
             width:      row.metadata.width,
             height:     row.metadata.height,
-            created_at: row.metadata.created_at.as_ref().map(|dt| dt.to_string()),
+            created_at: row.metadata.created_at.as_ref().map(|dt: &surrealdb::types::Datetime| dt.to_string()),
             objects:    row.objects.iter().map(|o| o.class_name.clone()).collect(),
             faces:      row.faces.iter().filter_map(|f| f.name.clone()).collect(),
         },
@@ -85,7 +86,7 @@ impl DbOperations {
     /// We dedupe per filename so that:
     /// - mỗi file vật lý (1 đường dẫn) chỉ được ingest 1 lần
     /// - nhưng bạn vẫn có thể copy thành tên khác và được coi là media mới
-    pub async fn check_exact_file(db: &SurrealDb, name: &str, sha256: &str) -> Result<Option<(String, bool)>> {
+    pub async fn check_exact_file(db: &SurrealDb, name: &str, _sha256: &str) -> Result<Option<(String, bool)>> {
         let mut res = db.db.query(
             "SELECT id, processed FROM media WHERE file.name = $name LIMIT 1"
         )
@@ -249,18 +250,19 @@ impl DbOperations {
     pub async fn name_person(db: &SurrealDb, face_id: &str, name: &str) -> Result<()> {
         let fid = face_id.to_string();
         let n = name.to_string();
-        // Update person table
-        db.db.query("UPDATE person SET name = $name WHERE face_id = $fid")
+        // 1. Update person table
+        let person_q = "UPDATE person SET name = $name WHERE face_id = $fid";
+        db.db.query(person_q)
             .bind(("name", n.clone()))
             .bind(("fid", fid.clone()))
             .await?;
-        // Update face entries embedded in media docs
-        db.db.query(
-            "UPDATE media SET faces = faces.map(|$f| IF $f.face_id = $fid THEN $f.{*, name: $name} ELSE $f END) WHERE faces.*.face_id CONTAINS $fid"
-        )
-        .bind(("fid", fid))
-        .bind(("name", n))
-        .await?;
+
+        // 2. Update embedded face entries in media using direct array filtering
+        let m_query = "UPDATE media SET faces[WHERE face_id = $fid].name = $name WHERE faces.*.face_id CONTAINS $fid";
+        db.db.query(m_query)
+            .bind(("fid", fid))
+            .bind(("name", n))
+            .await?;
         Ok(())
     }
 
@@ -305,12 +307,14 @@ impl DbOperations {
         Ok(())
     }
 
-    /// Delete all media, embeddings, and persons for a fresh start.
+    /// Delete all media, embeddings, persons, and configuration for a fresh start.
     pub async fn clear_database(db: &SurrealDb) -> Result<()> {
         db.db.query("DELETE media").await?.check()?;
         db.db.query("DELETE embedding").await?.check()?;
         db.db.query("DELETE person").await?.check()?;
         db.db.query("DELETE search_history").await?.check()?;
+        db.db.query("DELETE custom_album").await?.check()?;
+        db.db.query("DELETE config_auraseek").await?.check()?;
         Ok(())
     }
 
@@ -344,14 +348,49 @@ impl DbOperations {
 
     // ─── Trash & Hidden ──────────────────────────────────────────────
     
-    pub async fn move_to_trash(db: &SurrealDb, media_id: &str) -> Result<()> {
+    pub async fn move_to_trash(db: &SurrealDb, source_dir: &str, media_id: &str) -> Result<()> {
+        // 1. Get file name
+        let mut res = db.db.query(format!("SELECT file.name AS name FROM {}", media_id)).await?;
+        #[derive(serde::Deserialize, SurrealValue)]
+        struct NameRow { name: String }
+        let row: Option<NameRow> = res.take(0)?;
+        if let Some(r) = row {
+            let src_path = std::path::Path::new(source_dir).join(&r.name);
+            let trash_dir = std::path::Path::new(source_dir).join(".trash");
+            if !trash_dir.exists() {
+                let _ = std::fs::create_dir_all(&trash_dir);
+            }
+            let dst_path = trash_dir.join(&r.name);
+            
+            // Physical move to .trash
+            if src_path.exists() {
+                let _ = std::fs::rename(&src_path, &dst_path);
+            }
+        }
+
+        // 2. Mark in DB
         let query = format!("UPDATE {} SET deleted_at = time::now()", media_id);
         db.db.query(&query).await?.check()
             .map_err(|e| anyhow::anyhow!("move_to_trash failed: {}", e))?;
         Ok(())
     }
 
-    pub async fn restore_from_trash(db: &SurrealDb, media_id: &str) -> Result<()> {
+    pub async fn restore_from_trash(db: &SurrealDb, source_dir: &str, media_id: &str) -> Result<()> {
+        // 1. Get file name
+        let mut res = db.db.query(format!("SELECT file.name AS name FROM {}", media_id)).await?;
+        #[derive(serde::Deserialize, SurrealValue)]
+        struct NameRow { name: String }
+        let row: Option<NameRow> = res.take(0)?;
+        if let Some(r) = row {
+            let trash_path = std::path::Path::new(source_dir).join(".trash").join(&r.name);
+            let dst_path = std::path::Path::new(source_dir).join(&r.name);
+            
+            // Physical move back from .trash
+            if trash_path.exists() {
+                let _ = std::fs::rename(&trash_path, &dst_path);
+            }
+        }
+
         let query = format!("UPDATE {} SET deleted_at = NONE", media_id);
         db.db.query(&query).await?.check()
             .map_err(|e| anyhow::anyhow!("restore_from_trash failed: {}", e))?;
@@ -366,28 +405,54 @@ impl DbOperations {
         Self::group_rows_into_timeline(rows, source_dir)
     }
 
-    pub async fn empty_trash(db: &SurrealDb) -> Result<()> {
+    pub async fn empty_trash(db: &SurrealDb, source_dir: &str) -> Result<()> {
         // Fetch paths first to delete from disk
-        let mut res = db.db.query("SELECT file.path FROM media WHERE type::is_none(deleted_at) = false").await?;
+        let mut res = db.db.query("SELECT file.name AS name FROM media WHERE type::is_none(deleted_at) = false").await?;
         #[derive(serde::Deserialize, SurrealValue)]
-        struct PathRow { path: Option<String> }
-        let rows: Vec<PathRow> = res.take(0)?;
-        for r in rows.into_iter().filter_map(|r| r.path) {
-            let _ = std::fs::remove_file(&r); // best effort
+        struct NameRow { name: Option<String> }
+        let rows: Vec<NameRow> = res.take(0)?;
+        for r in rows.into_iter().filter_map(|r| r.name) {
+            let path = std::path::Path::new(source_dir).join(".trash").join(&r);
+            if path.exists() {
+                let _ = std::fs::remove_file(&path); // physical hard delete from .trash
+            }
         }
         db.db.query("DELETE media WHERE type::is_none(deleted_at) = false").await?.check()?;
         Ok(())
     }
     
-    pub async fn auto_purge_trash(db: &SurrealDb) -> Result<()> {
-        let mut res = db.db.query("SELECT file.path FROM media WHERE type::is_none(deleted_at) = false AND deleted_at < time::now() - 30d").await?;
+    pub async fn auto_purge_trash(db: &SurrealDb, source_dir: &str) -> Result<()> {
+        let mut res = db.db.query("SELECT file.name AS name FROM media WHERE type::is_none(deleted_at) = false AND deleted_at < time::now() - 30d").await?;
         #[derive(serde::Deserialize, SurrealValue)]
-        struct PathRow { path: Option<String> }
-        let rows: Vec<PathRow> = res.take(0)?;
-        for r in rows.into_iter().filter_map(|r| r.path) {
-            let _ = std::fs::remove_file(&r); // best effort
+        struct NameRow { name: Option<String> }
+        let rows: Vec<NameRow> = res.take(0)?;
+        for r in rows.into_iter().filter_map(|r| r.name) {
+            let path = std::path::Path::new(source_dir).join(".trash").join(&r);
+            if path.exists() {
+                let _ = std::fs::remove_file(&path);
+            }
         }
         db.db.query("DELETE media WHERE type::is_none(deleted_at) = false AND deleted_at < time::now() - 30d").await?.check()?;
+        Ok(())
+    }
+
+    pub async fn hard_delete_trash_item(db: &SurrealDb, source_dir: &str, media_id: &str) -> Result<()> {
+        let query = format!("SELECT file.name AS name FROM media WHERE id = {} AND type::is_none(deleted_at) = false", media_id);
+        let mut res = db.db.query(&query).await?;
+        #[derive(serde::Deserialize, SurrealValue)]
+        struct NameRow { name: Option<String> }
+        let rows: Vec<NameRow> = res.take(0)?;
+        if let Some(r) = rows.into_iter().next() {
+            if let Some(name) = r.name {
+                // Files marked as deleted are in the .trash folder
+                let path = std::path::Path::new(source_dir).join(".trash").join(&name);
+                if path.exists() {
+                    let _ = std::fs::remove_file(&path); // physical hard delete from .trash
+                }
+            }
+        }
+        let delete_query = format!("DELETE media WHERE id = {}", media_id);
+        db.db.query(&delete_query).await?.check()?;
         Ok(())
     }
 
@@ -427,13 +492,26 @@ impl DbOperations {
     }
 
     fn group_rows_into_timeline(rows: Vec<MediaRow>, source_dir: &str) -> Result<Vec<TimelineGroup>> {
+        let base = source_dir.trim_end_matches('/');
+
+        // Helper to parse year and month, falling back to modified_at if created_at is null
+        let parse_ym_from_row = |row: &MediaRow| -> (i32, u32) {
+            parse_ym(row)
+        };
 
         let mut groups: HashMap<(i32, u32), TimelineGroup> = HashMap::new();
 
-        for row in rows {
-            let (year, month) = parse_ym(&row.metadata.created_at);
+        let mut sorted_rows = rows;
+        sorted_rows.sort_by(|a, b| {
+            let (ay, am) = parse_ym_from_row(a);
+            let (by, bm) = parse_ym_from_row(b);
+            if ay != by { by.cmp(&ay) } else { bm.cmp(&am) }
+        });
+
+        for row in sorted_rows {
+            let (year, month) = parse_ym_from_row(&row);
             let label = format_month_label(year, month);
-            let file_path = format!("{}/{}", source_dir.trim_end_matches('/'), row.file.name);
+            let file_path = format!("{}/{}", base, row.file.name);
             let thumbnail_path = row.thumbnail.clone();
             let item = TimelineItem {
                 media_id:   record_id_to_string(&row.id),
@@ -441,12 +519,12 @@ impl DbOperations {
                 media_type: row.media_type.clone(),
                 width:      row.metadata.width,
                 height:     row.metadata.height,
-                created_at: row.metadata.created_at.as_ref().map(|dt| dt.to_string()),
+                created_at: row.metadata.created_at.as_ref().map(|dt: &surrealdb::types::Datetime| dt.to_string()),
                 objects:    row.objects.iter().map(|o| o.class_name.clone()).collect(),
                 faces:      row.faces.iter().filter_map(|f| f.name.clone()).collect(),
                 face_ids:   row.faces.iter().map(|f| f.face_id.clone()).collect(),
                 favorite:   row.favorite,
-                deleted_at: row.deleted_at.as_ref().map(|dt| dt.to_string()),
+                deleted_at: row.deleted_at.as_ref().map(|dt: &surrealdb::types::Datetime| dt.to_string()),
                 is_hidden:  row.is_hidden,
                 thumbnail_path,
                 detected_objects: row.objects.iter().map(|o| DetectedObject {
@@ -647,6 +725,65 @@ impl DbOperations {
                 face_bbox: r.face_bbox.map(|b| crate::db::models::BboxInfo { x: b.x, y: b.y, w: b.w, h: b.h }),
             }
         }).collect())
+    }
+
+    pub async fn merge_people(db: &SurrealDb, target_face_id: &str, source_face_id: &str) -> Result<()> {
+        let src = source_face_id.to_string();
+        let tgt = target_face_id.to_string();
+
+        let src_id = if src.contains(':') { src.clone() } else { format!("person:{}", src) };
+        let tgt_id = if tgt.contains(':') { tgt.clone() } else { format!("person:{}", tgt) };
+
+        // 1. Get source and target names
+        #[derive(serde::Deserialize, SurrealValue)]
+        struct NameRow { name: Option<String> }
+        let mut res = db.db.query("SELECT name FROM type::record($id)").bind(("id", src_id.clone())).await?;
+        let source_name: Option<NameRow> = res.take(0)?;
+        
+        let mut res2 = db.db.query("SELECT name FROM type::record($id)").bind(("id", tgt_id.clone())).await?;
+        let target_name_row: Option<NameRow> = res2.take(0)?;
+        let final_name: Option<String> = target_name_row.and_then(|r| r.name).or(source_name.and_then(|r| r.name));
+
+        // 2. Reassign all media faces from src → tgt
+        // Update IDs and names in one go for efficiency
+        let m_query = "UPDATE media SET faces[WHERE face_id = $src_raw].face_id = $tgt_raw, faces[WHERE face_id = $src_raw].name = $nm WHERE faces.*.face_id CONTAINS $src_raw";
+        db.db.query(m_query)
+            .bind(("src_raw", src))
+            .bind(("tgt_raw", tgt))
+            .bind(("nm", final_name.clone()))
+            .await?;
+
+        // 3. Delete source person record
+        db.db.query("DELETE type::record($id)").bind(("id", src_id)).await?.check()?;
+
+        // 4. Update target person name if we have one
+        if let Some(ref n) = final_name {
+            db.db.query("UPDATE type::record($id) SET name = $name")
+                .bind(("id", tgt_id))
+                .bind(("name", n.clone()))
+                .await?.check()?;
+        }
+        Ok(())
+    }
+
+    pub async fn delete_person(db: &SurrealDb, face_id: &str) -> Result<()> {
+        let fid = face_id.to_string();
+        // 1. Remove face references from media docs
+        let m_query = "UPDATE media SET faces = faces.filter(|$f| $f.face_id != $fid) WHERE faces.*.face_id CONTAINS $fid";
+        db.db.query(m_query).bind(("fid", fid.clone())).await?;
+        
+        // 2. Delete person record. Ensure we target the record ID correctly.
+        // If face_id=uuid, then ID in 'person' table is actually 'person:uuid'
+        let table_id = if fid.contains(':') { fid } else { format!("person:{}", fid) };
+        db.db.query("DELETE type::record($id)").bind(("id", table_id)).await?.check()?;
+        Ok(())
+    }
+
+    pub async fn remove_face_from_person(db: &SurrealDb, media_id: &str, face_id: &str) -> Result<()> {
+        let fid = face_id.to_string();
+        let query = format!("UPDATE {} SET faces = faces.filter(|$f| $f.face_id != $fid)", media_id);
+        db.db.query(&query).bind(("fid", fid)).await?.check()?;
+        Ok(())
     }
 
     // ─── Duplicates ──────────────────────────────────────────────────
@@ -944,14 +1081,141 @@ impl DbOperations {
         .await?;
         Ok(res.take(0)?)
     }
+
+    // ─── Manual Albums ───────────────────────────────────────────────────
+
+    pub async fn create_album(db: &SurrealDb, title: String) -> Result<String> {
+        crate::log_info!("🔨 [DB] Creating album: {}", title);
+        let q = "CREATE custom_album SET title = $title, media_ids = [], created_at = time::now()";
+        let mut res = db.db.query(q)
+            .bind(("title", title))
+            .await?;
+        
+        #[derive(serde::Deserialize, SurrealValue)]
+        struct AlbumRow { id: RecordId }
+        let rows: Vec<AlbumRow> = res.take(0)?;
+        if let Some(r) = rows.into_iter().next() {
+            let id = record_id_to_string(&r.id);
+            crate::log_info!("✅ [DB] Album created successfully: {}", id);
+            Ok(id)
+        } else {
+            crate::log_error!("❌ [DB] Failed to create album row");
+            Err(anyhow::anyhow!("Không tạo được bản ghi album trong cơ sở dữ liệu"))
+        }
+    }
+
+    pub async fn get_albums(db: &SurrealDb, source_dir: &str) -> Result<Vec<CustomAlbum>> {
+        crate::log_info!("🔍 [DB] Fetching all albums...");
+        let q = "SELECT id, title, created_at,
+                 array::len(media_ids) as count,
+                 (SELECT VALUE file.name FROM media WHERE id = $parent.media_ids[0] LIMIT 1)[0] as cover_name,
+                 (SELECT VALUE thumbnail FROM media WHERE id = $parent.media_ids[0] LIMIT 1)[0] as cover_thumb
+                 FROM custom_album ORDER BY created_at DESC";
+        let mut res = db.db.query(q).await?;
+        
+        #[derive(serde::Deserialize, SurrealValue)]
+        struct Row { id: RecordId, title: String, count: Option<usize>, cover_name: Option<String>, cover_thumb: Option<String> }
+        
+        let rows: Vec<Row> = res.take(0)?;
+        crate::log_info!("📂 [DB] Found {} manual albums", rows.len());
+        let base = source_dir.trim_end_matches('/');
+        
+        let mut albums = Vec::new();
+        for r in rows {
+            let cover_url = if let Some(t) = r.cover_thumb {
+                Some(if std::path::Path::new(&t).is_absolute() { t } else { format!("{}/{}", base, t) })
+            } else if let Some(n) = r.cover_name {
+                Some(format!("{}/{}", base, n))
+            } else {
+                None
+            };
+            crate::log_info!("  📷 Album '{}' count={} cover={:?}", r.title, r.count.unwrap_or(0), cover_url);
+            albums.push(CustomAlbum {
+                id: record_id_to_string(&r.id),
+                title: r.title,
+                count: r.count.unwrap_or(0) as u32,
+                cover_url,
+            });
+        }
+        Ok(albums)
+    }
+
+    pub fn parse_record_id(id_str: &str) -> Result<RecordId> {
+        let (tb, id) = id_str.split_once(':').ok_or_else(|| anyhow::anyhow!("Invalid record ID format: {}", id_str))?;
+        Ok(RecordId::new(tb, id))
+    }
+
+    pub async fn add_to_album(db: &SurrealDb, album_id: &str, media_ids: Vec<String>) -> Result<()> {
+        crate::log_info!("➕ [DB] Adding {} files to album: {}", media_ids.len(), album_id);
+        let album_rid = Self::parse_record_id(album_id)?;
+        
+        // Convert all string IDs to RecordId objects to ensure proper typing in the database
+        let mut mids = Vec::new();
+        for mid in media_ids {
+            if let Ok(rid) = Self::parse_record_id(&mid) {
+                mids.push(rid);
+            }
+        }
+
+        // Use array::distinct(array::add(...)) to ensure we don't duplicate items
+        let q = "UPDATE $album SET media_ids = array::distinct(array::add(media_ids, $mids)) RETURN count(media_ids) as total";
+        let mut resp = db.db.query(q)
+            .bind(("album", album_rid))
+            .bind(("mids", mids))
+            .await?;
+        
+        #[derive(serde::Deserialize, SurrealValue)]
+        struct CountRow { total: Option<u32> }
+        let res: Vec<CountRow> = resp.take(0)?;
+        if let Some(r) = res.get(0) {
+            crate::log_info!("📋 [DB] Verified Album now has {} items", r.total.unwrap_or(0));
+        }
+            
+        crate::log_info!("✅ [DB] Successfully updated media_ids array");
+        Ok(())
+    }
+
+    pub async fn remove_from_album(db: &SurrealDb, album_id: &str, media_ids: Vec<String>) -> Result<()> {
+        let album_rid = Self::parse_record_id(album_id)?;
+        let mut mids = Vec::new();
+        for mid in media_ids {
+            mids.push(Self::parse_record_id(&mid)?);
+        }
+        let q = "UPDATE $album SET media_ids = array::filter(media_ids, |$id| !$mids CONTAINS $id)";
+        db.db.query(q)
+            .bind(("album", album_rid))
+            .bind(("mids", mids))
+            .await?.check()?;
+        Ok(())
+    }
+
+    pub async fn delete_album(db: &SurrealDb, album_id: &str) -> Result<()> {
+        let album_rid = Self::parse_record_id(album_id)?;
+        db.db.query("DELETE $album")
+            .bind(("album", album_rid))
+            .await?.check()?;
+        Ok(())
+    }
+
+    pub async fn get_album_photos(db: &SurrealDb, album_id: &str, source_dir: &str) -> Result<Vec<TimelineGroup>> {
+        let album_rid = Self::parse_record_id(album_id)?;
+        let q = "SELECT * FROM media WHERE id INSIDE (SELECT VALUE media_ids FROM $album LIMIT 1)[0] AND deleted_at = NONE AND is_hidden = false ORDER BY metadata.created_at DESC";
+        let mut res = db.db.query(q)
+            .bind(("album", album_rid))
+            .await?;
+        let rows: Vec<MediaRow> = res.take(0)?;
+        Self::group_rows_into_timeline(rows, source_dir)
+    }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
-fn parse_ym(dt: &Option<surrealdb::types::Datetime>) -> (i32, u32) {
-    if let Some(dt_val) = dt {
-        use chrono::Datelike;
-        return (dt_val.year(), dt_val.month() as u32);
+fn parse_ym(row: &MediaRow) -> (i32, u32) {
+    if let Some(ref dt) = row.metadata.created_at {
+        return (dt.year(), dt.month() as u32);
+    }
+    if let Some(ref dt) = row.metadata.modified_at {
+        return (dt.year(), dt.month() as u32);
     }
     (1970, 1)
 }

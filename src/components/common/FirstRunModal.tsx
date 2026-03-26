@@ -11,6 +11,9 @@ export function FirstRunModal({ onComplete }: FirstRunModalProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  const isWindows = typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes("win");
+  const placeholderTxt = isWindows ? "C:\\Users\\Admin\\Pictures" : "/home/user/Pictures";
+
   const handleConfirm = async () => {
     const trimmed = dir.trim();
     if (!trimmed) {
@@ -52,7 +55,7 @@ export function FirstRunModal({ onComplete }: FirstRunModalProps) {
               value={dir}
               onChange={(e) => setDir(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleConfirm()}
-              placeholder="/home/user/Pictures"
+              placeholder={placeholderTxt}
               className="flex-1 rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-indigo-500/60 focus:ring-1 focus:ring-indigo-500/30"
             />
           </div>

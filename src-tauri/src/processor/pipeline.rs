@@ -9,7 +9,7 @@ use crate::model::face::FaceGroup;
 use crate::{log_info, log_warn};
 use opencv::{
     core::{Mat, Rect},
-    imgcodecs::{imread, IMREAD_COLOR},
+    imgcodecs::{imdecode, IMREAD_COLOR, IMREAD_IGNORE_ORIENTATION},
     prelude::*,
 };
 
@@ -23,8 +23,8 @@ pub struct EngineOutput {
 
 fn default_config() -> EngineConfig {
     EngineConfig {
-        vision_path:  "assets/models/vision_vi-sclir.onnx".into(),
-        text_path:    "assets/models/text_vi-sclir.onnx".into(),
+        vision_path:  "assets/models/vision_visclir.onnx".into(),
+        text_path:    "assets/models/text_visclir.onnx".into(),
         yolo_path:    "assets/models/yolo26n-seg.onnx".into(),
         yunet_path:   "assets/models/face_detection_yunet_2022mar.onnx".into(),
         sface_path:   "assets/models/face_recognition_sface_2021dec.onnx".into(),
@@ -48,8 +48,8 @@ pub struct EngineConfig {
 impl EngineConfig {
     pub fn new_with_dir(base: &std::path::Path) -> Self {
         Self {
-            vision_path: base.join("models/vision_vi-sclir.onnx").to_string_lossy().into_owned(),
-            text_path: base.join("models/text_vi-sclir.onnx").to_string_lossy().into_owned(),
+            vision_path: base.join("models/vision_visclir.onnx").to_string_lossy().into_owned(),
+            text_path: base.join("models/text_visclir.onnx").to_string_lossy().into_owned(),
             yolo_path: base.join("models/yolo26n-seg.onnx").to_string_lossy().into_owned(),
             yunet_path: base.join("models/face_detection_yunet_2022mar.onnx").to_string_lossy().into_owned(),
             sface_path: base.join("models/face_recognition_sface_2021dec.onnx").to_string_lossy().into_owned(),
@@ -124,7 +124,10 @@ impl AuraSeekEngine {
                 }
             } else {
                 // Crop each person bbox and run face detection on the crop
-                let frame = imread(img_path, IMREAD_COLOR)?;
+                let bytes = std::fs::read(img_path)?;
+                let buf = opencv::core::Vector::<u8>::from_iter(bytes);
+                // IGNORE EXIF rotation so dimensions exactly match Rust `image` crate used by YOLO!
+                let frame = imdecode(&buf, IMREAD_COLOR | IMREAD_IGNORE_ORIENTATION)?;
                 if !frame.empty() {
                     let img_size = frame.size()?;
                     let (img_w, img_h) = (img_size.width, img_size.height);
@@ -153,6 +156,22 @@ impl AuraSeekEngine {
                         }
                     }
                 }
+
+                // Person crops can miss tiny/side faces. If still empty, run a
+                // full-frame pass as a safety fallback.
+                if faces.is_empty() {
+                    if let Ok(detected) = fm.detect_from_path(img_path, &self.face_db) {
+                        faces = detected;
+                    }
+                }
+            }
+
+            if faces.is_empty() {
+                log_info!(
+                    "face detect: no face found | persons={} | file={}",
+                    person_bboxes.len(),
+                    img_path
+                );
             }
 
             // Session face matching for unknown faces

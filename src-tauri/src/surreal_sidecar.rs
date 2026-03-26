@@ -11,18 +11,32 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-pub const PORT_START: u16 = 8000;
-pub const PORT_END: u16 = 9000;
+fn hidden_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
+use std::fs::OpenOptions;
+
+// Fixed TCP port for SurrealDB. If something else is already bound to this
+// port, AuraSeek will fail fast instead of silently picking another port.
+pub const DB_PORT: u16 = 39790;
 
 // ─── Port helpers ─────────────────────────────────────────────────────────────
 
 /// Return the first port in [start, end] on which nothing is listening (i.e.
 /// `TcpListener::bind` succeeds).  Returns `None` if the whole range is occupied.
+#[allow(dead_code)]
 pub fn find_free_port(start: u16, end: u16) -> Option<u16> {
     (start..=end).find(|&port| TcpListener::bind(("127.0.0.1", port)).is_ok())
 }
 
 /// Return `true` if port accepts TCP (anything is listening).
+#[allow(dead_code)]
 fn is_port_open(port: u16) -> bool {
     let addr: SocketAddr = format!("127.0.0.1:{}", port).parse().unwrap();
     TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok()
@@ -37,6 +51,7 @@ fn is_port_open(port: u16) -> bool {
 /// Using HTTP instead of just TCP connectivity avoids false positives where
 /// another service (web server, proxy, etc.) is listening on the port but
 /// would stall the WS handshake indefinitely.
+#[allow(dead_code)]
 pub fn is_surreal_on_port(port: u16) -> bool {
     use std::io::{Read, Write};
 
@@ -70,11 +85,14 @@ pub fn is_surreal_on_port(port: u16) -> bool {
 
 /// If a SurrealDB instance is already listening in [PORT_START, PORT_END],
 /// return that port so we can reuse it (skips spawning a new process).
+#[allow(dead_code)]
 pub fn find_existing_surreal_port() -> Option<u16> {
-    // Quick pre-filter: only check ports that have something listening at all
-    (PORT_START..=PORT_END)
-        .filter(|&p| is_port_open(p))
-        .find(|&p| is_surreal_on_port(p))
+    // With a fixed DB_PORT we only ever need to check that single port.
+    if is_port_open(DB_PORT) && is_surreal_on_port(DB_PORT) {
+        Some(DB_PORT)
+    } else {
+        None
+    }
 }
 
 // ─── Binary location ──────────────────────────────────────────────────────────
@@ -84,10 +102,18 @@ pub fn find_existing_surreal_port() -> Option<u16> {
 /// 2. Same directory as the current executable (also covers installed builds)
 /// 3. `binaries/surreal[.exe]`          – dev-mode layout (src-tauri/binaries/)
 /// 4. System PATH via `which` / `where`
-pub fn find_binary(resource_dir: &Path) -> Option<PathBuf> {
+pub fn find_binary(resource_dir: &Path, data_dir: &Path) -> Option<PathBuf> {
     let bin = if cfg!(windows) { "surreal.exe" } else { "surreal" };
 
-    // 1. Tauri resource dir (production bundle)
+    // 0. Data dir (downloaded at runtime by downloader.rs)
+    // The data_dir parameter here is already `<app_data>/db/`
+    let downloaded = data_dir.join(bin);
+    if downloaded.exists() {
+        crate::log_info!("🗄️  Found SurrealDB binary (downloaded): {}", downloaded.display());
+        return Some(downloaded);
+    }
+
+    // 1. Tauri resource dir (production bundle - legacy approach)
     let candidate = resource_dir.join(bin);
     if candidate.exists() {
         crate::log_info!("🗄️  Found SurrealDB binary (resource): {}", candidate.display());
@@ -114,7 +140,7 @@ pub fn find_binary(resource_dir: &Path) -> Option<PathBuf> {
 
     // 4. System PATH
     let which_cmd = if cfg!(windows) { "where" } else { "which" };
-    if let Ok(out) = Command::new(which_cmd).arg("surreal").output() {
+    if let Ok(out) = hidden_command(which_cmd).arg("surreal").output() {
         let s = String::from_utf8_lossy(&out.stdout);
         let first_line = s.lines().next().unwrap_or("").trim().to_string();
         if !first_line.is_empty() {
@@ -142,29 +168,47 @@ pub fn start_surreal(
     port:     u16,
     user:     &str,
     pass:     &str,
+    db_uri:   &str,
 ) -> Result<Child> {
     std::fs::create_dir_all(data_dir)
         .context("Failed to create SurrealDB data directory")?;
 
-    let db_path   = data_dir.join("auraseek.db");
     let bind_addr = format!("0.0.0.0:{}", port);
-    // SurrealDB 3.x deprecates `file://` in favour of dedicated backends such
-    // as `surrealkv://` and `rocksdb://`. We use SurrealKV here as a robust
-    // single-node store.
-    let db_uri    = format!("surrealkv://{}", db_path.display());
 
     crate::log_info!("🗄️  Starting SurrealDB | binary={} port={} uri={}",
         binary.display(), port, db_uri);
 
-    let child = Command::new(binary)
-        .args(["start", "--bind", &bind_addr, "--user", user, "--pass", pass, "--log", "warn", &db_uri])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+    // Write sidecar logs into the data dir so we can debug startup failures
+    // (permission issues, bad datastore URI, missing deps, etc.).
+    let log_path = data_dir.join("surreal.log");
+    let log_file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .with_context(|| format!("Failed to open SurrealDB log file {}", log_path.display()))?;
+    let log_file_err = log_file.try_clone()
+        .with_context(|| format!("Failed to clone SurrealDB log file handle {}", log_path.display()))?;
+
+    let mut child = hidden_command(binary);
+    let child = child
+        .current_dir(data_dir)
+        .args(["start", "--bind", &bind_addr, "--user", user, "--pass", pass, "--log", "warn", db_uri])
+        .stdout(Stdio::from(log_file))
+        .stderr(Stdio::from(log_file_err))
         .spawn()
         .with_context(|| format!("Failed to spawn SurrealDB from {}", binary.display()))?;
 
     crate::log_info!("✅ SurrealDB spawned (pid={})", child.id());
     Ok(child)
+}
+
+fn read_surreal_log_snippet(data_dir: &Path) -> Option<String> {
+    let log_path = data_dir.join("surreal.log");
+    let s = std::fs::read_to_string(&log_path).ok()?;
+    // Keep last ~80 lines to avoid huge logs.
+    let lines: Vec<&str> = s.lines().collect();
+    let start = lines.len().saturating_sub(80);
+    Some(lines[start..].join("\n"))
 }
 
 /// Poll until SurrealDB accepts a TCP connection or `max_secs` elapses.
@@ -202,25 +246,71 @@ pub fn ensure_surreal(
     user:         &str,
     pass:         &str,
 ) -> Result<(String, Option<Child>)> {
-    // Reuse an existing instance (e.g. from a previous session that didn't exit cleanly)
-    if let Some(port) = find_existing_surreal_port() {
-        crate::log_info!("🔌 Reusing existing SurrealDB on port {}", port);
-        return Ok((format!("127.0.0.1:{}", port), None));
-    }
+    // NOTE: We use a fixed TCP port (DB_PORT). If something else is already
+    // bound to this port, AuraSeek will fail fast with a clear error instead
+    // of silently picking another port, so that the frontend can surface a
+    // useful message to the user.
 
-    // Find a free port
-    let port = find_free_port(PORT_START, PORT_END)
-        .ok_or_else(|| anyhow::anyhow!("No free port available in {}-{}", PORT_START, PORT_END))?;
+    let port = DB_PORT;
 
     // Locate binary
-    let binary = find_binary(resource_dir)
+    let binary = find_binary(resource_dir, data_dir)
         .ok_or_else(|| anyhow::anyhow!(
-            "SurrealDB binary not found. Install SurrealDB or rebuild with bundled binary."
+            "SurrealDB binary not found. It should have been downloaded on first launch."
         ))?;
 
-    // Start and wait
-    let child = start_surreal(&binary, data_dir, port, user, pass)?;
-    wait_for_surreal(port, 30)?;
+    // Start SurrealDB.
+    // Primary persistent datastore: SurrealKV (directory-backed).
+    let kv_uri = "rocksdb://auraseek.db".to_string();
+    let mut child = start_surreal(&binary, data_dir, port, user, pass, &kv_uri)?;
+
+    // Many "connection refused" issues are simply the sidecar exiting immediately.
+    // Check quickly and surface the SurrealDB log to the app log for debugging.
+    std::thread::sleep(Duration::from_millis(300));
+    if let Ok(Some(status)) = child.try_wait() {
+        let snippet = read_surreal_log_snippet(data_dir).unwrap_or_else(|| "<no surreal.log>".into());
+
+        // If the OS is denying filesystem access (common with Windows security policies),
+        // fall back to an in-memory DB so the app can still run (non-persistent).
+        if snippet.to_lowercase().contains("access is denied") || snippet.to_lowercase().contains("os error 5") {
+            crate::log_warn!(
+                "⚠️  SurrealKV datastore access denied. Falling back to in-memory SurrealDB (mem://). Data will NOT persist. See {}/surreal.log",
+                data_dir.display()
+            );
+            let mut mem_child = start_surreal(&binary, data_dir, port, user, pass, "mem://")?;
+            std::thread::sleep(Duration::from_millis(200));
+            if let Ok(Some(mem_status)) = mem_child.try_wait() {
+                let mem_snippet = read_surreal_log_snippet(data_dir).unwrap_or_else(|| "<no surreal.log>".into());
+                anyhow::bail!(
+                    "SurrealDB exited immediately in both SurrealKV and mem:// modes (kv_status={}, mem_status={}). See {}/surreal.log.\n{}",
+                    status,
+                    mem_status,
+                    data_dir.display(),
+                    mem_snippet
+                );
+            }
+            return Ok((format!("127.0.0.1:{}", port), Some(mem_child)));
+        }
+
+        anyhow::bail!(
+            "SurrealDB exited immediately (status={}). See {}/surreal.log.\n{}",
+            status,
+            data_dir.display(),
+            snippet
+        );
+    }
+
+    // Wait briefly for the TCP port to open so cmd_init doesn't race it.
+    if let Err(e) = wait_for_surreal(port, 3) {
+        let snippet = read_surreal_log_snippet(data_dir).unwrap_or_else(|| "<no surreal.log>".into());
+        anyhow::bail!(
+            "{}. SurrealDB is not accepting connections on 127.0.0.1:{} yet. See {}/surreal.log.\n{}",
+            e,
+            port,
+            data_dir.display(),
+            snippet
+        );
+    }
 
     Ok((format!("127.0.0.1:{}", port), Some(child)))
 }

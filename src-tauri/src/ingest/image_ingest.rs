@@ -27,7 +27,11 @@ pub async fn ingest_folder(
     engine: Arc<Mutex<Option<AuraSeekEngine>>>,
     app: Option<tauri::AppHandle>,
     thumb_cache_dir: Option<std::path::PathBuf>,
+    abort_sync: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<IngestSummary> {
+    // 0. Reset abort flag at start
+    abort_sync.store(false, std::sync::atomic::Ordering::SeqCst);
+    
     let source_path = Path::new(&source_dir);
     if !source_path.exists() {
         crate::log_error!("Source directory not found: {}", source_dir);
@@ -65,6 +69,7 @@ pub async fn ingest_folder(
 
     let db_scan = db.clone();
     let source_dir_clone = source_dir.clone();
+    let abort_scan = abort_sync.clone();
 
     // Thread 1: file scan + insert media stubs (images then videos)
     let scan_task = tokio::spawn(async move {
@@ -73,6 +78,10 @@ pub async fn ingest_folder(
         let mut errors = 0usize;
 
         for path in image_files {
+            if abort_scan.load(std::sync::atomic::Ordering::SeqCst) {
+                crate::log_info!("🛑 Ingest scan aborted for images");
+                break;
+            }
             match scan_single_file(&path, &db_scan, &source_dir_clone, "image").await {
                 Ok(Some(media_id)) => {
                     newly_added += 1;
@@ -87,6 +96,10 @@ pub async fn ingest_folder(
         }
 
         for path in video_files {
+            if abort_scan.load(std::sync::atomic::Ordering::SeqCst) {
+                crate::log_info!("🛑 Ingest scan aborted for videos");
+                break;
+            }
             match scan_single_file(&path, &db_scan, &source_dir_clone, "video").await {
                 Ok(Some(media_id)) => {
                     newly_added += 1;
@@ -120,6 +133,11 @@ pub async fn ingest_folder(
     // Thread 2: AI processing + embedding
     let mut ai_processed = 0usize;
     for (path, media_id, is_video) in to_process {
+        if abort_sync.load(std::sync::atomic::Ordering::SeqCst) {
+            crate::log_info!("🛑 AI processing loop aborted");
+            break;
+        }
+        
         let path_str = path.to_string_lossy().to_string();
         let file_name_only = path.file_name()
             .and_then(|n| n.to_str())
@@ -248,8 +266,8 @@ pub async fn process_image_file(
                 face_id: fid.clone(),
                 name: None,
                 thumbnail: Some(file_name_only.to_string()),
-                conf: Some(*conf as f32),
-                face_bbox: Some(bbox.clone() as Bbox),
+                conf: Some(*conf),
+                face_bbox: Some(bbox.clone()),
             }).await {
                 crate::log_warn!("⚠️ upsert_person failed for {}: {}", fid, e);
             }
@@ -469,8 +487,6 @@ pub async fn ingest_files(
                                     f.face_id.clone(), f.conf,
                                     Bbox { x: f.bbox.x, y: f.bbox.y, w: f.bbox.w, h: f.bbox.h },
                                 )).collect();
-                                drop(eng_guard);
-
                                 let db_guard = db.lock().await;
                                 if let Some(ref sdb) = *db_guard {
                                     let _ = DbOperations::update_media_ai(sdb, &media_id, objects, faces, None).await;
@@ -478,22 +494,23 @@ pub async fn ingest_files(
                                         let _ = DbOperations::insert_embedding(sdb, &media_id, "image", None, None, output.vision_embedding).await;
                                     }
                                     for (fid, conf, bbox) in &detected_faces {
+                                        crate::log_info!("  👤 Upserting person face_id={} conf={:.3}", fid, conf);
                                         let _ = DbOperations::upsert_person(sdb, PersonDoc {
-                                            face_id: fid.clone(), name: None,
-                                            thumbnail: Some(file_name.clone()),
-                                            conf: Some(*conf), face_bbox: Some(bbox.clone()),
+                                            face_id: fid.clone(),
+                                            name: None,
+                                            thumbnail: Some(file_name.to_string()),
+                                            conf: Some(*conf),
+                                            face_bbox: Some(Bbox { x: bbox.x, y: bbox.y, w: bbox.w, h: bbox.h }),
                                         }).await;
                                     }
                                 }
                             }
                             Err(e) => {
-                                drop(eng_guard);
                                 crate::log_warn!("🤖 AI error for {}: {}", file_name, e);
                             }
                         }
-                    } else {
-                        drop(eng_guard);
                     }
+                    drop(eng_guard);
                 }
             }
             Ok(None) => { summary.skipped_dup += 1; }

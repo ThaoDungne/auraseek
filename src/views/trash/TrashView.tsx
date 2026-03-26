@@ -5,6 +5,7 @@ import { PhotoGrid } from "@/components/photos/PhotoGrid";
 import { FullScreenViewer } from "@/components/photo-detail/FullScreenViewer";
 import { Button } from "@/components/ui/button";
 import { Trash2 } from "lucide-react";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 export function TrashView() {
   const [timelineGroups, setTimelineGroups] = useState<TimelineGroup[]>([]);
@@ -49,15 +50,20 @@ export function TrashView() {
     loadTrash();
   }, [loadTrash]);
 
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
   const handleEmptyTrash = async () => {
-    if (confirm("Bạn có chắc muốn làm sạch thùng rác? Hành động này không thể hoàn tác.")) {
-      try {
-        await AuraSeekApi.emptyTrash();
-        loadTrash();
-        window.dispatchEvent(new Event("refresh_photos"));
-      } catch (err) {
-        console.error("Lỗi khi làm sạch thùng rác");
-      }
+    try {
+      setIsDeleting(true);
+      await AuraSeekApi.emptyTrash();
+      loadTrash();
+      window.dispatchEvent(new Event("refresh_photos"));
+    } catch (err) {
+      console.error("Lỗi khi làm sạch thùng rác");
+    } finally {
+      setIsDeleting(false);
+      setConfirmOpen(false);
     }
   };
 
@@ -81,7 +87,7 @@ export function TrashView() {
         </div>
         <Button 
           variant="destructive" 
-          onClick={handleEmptyTrash}
+          onClick={() => setConfirmOpen(true)}
           disabled={photos.length === 0}
           className="flex items-center gap-2"
         >
@@ -137,6 +143,17 @@ export function TrashView() {
             isTrashMode={true}
         />
       )}
+
+      <ConfirmDialog
+        isOpen={confirmOpen}
+        title="Làm sạch thùng rác"
+        description="Bạn có chắc muốn làm sạch thùng rác? Hành động này sẽ xoá vĩnh viễn tất cả các tệp khỏi ổ đĩa và không thể hoàn tác."
+        confirmText="Xóa tất cả"
+        isDestructive
+        isLoading={isDeleting}
+        onConfirm={handleEmptyTrash}
+        onCancel={() => setConfirmOpen(false)}
+      />
     </div>
   );
 }

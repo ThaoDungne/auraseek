@@ -11,6 +11,7 @@ import { AuraSeekApi } from "@/lib/api";
 import { SettingsSourceSection } from "./SettingsSourceSection.tsx";
 import { SettingsDatabaseSection } from "./SettingsDatabaseSection.tsx";
 import { SettingsErrorAlert } from "./SettingsErrorAlert.tsx";
+import { ConfirmDialog } from "../ui/ConfirmDialog";
 
 interface SettingsModalProps {
     open: boolean;
@@ -28,6 +29,10 @@ export function SettingsModal({ open, onOpenChange, currentSourceDir = "", onSou
     
     const [cleaning, setCleaning] = useState(false);
     const [resetting, setResetting] = useState(false);
+
+    // Dialog states
+    const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+    const [alertData, setAlertData] = useState<{isOpen: boolean, title: string, desc: string}>({ isOpen: false, title: "", desc: "" });
 
     useEffect(() => {
         if (open) {
@@ -67,92 +72,136 @@ export function SettingsModal({ open, onOpenChange, currentSourceDir = "", onSou
         }
     };
 
+    const handleCleanupClick = () => {
+        onOpenChange(false);
+        handleCleanup();
+    };
+
     const handleCleanup = async () => {
         setCleaning(true);
         try {
             const removed = await AuraSeekApi.cleanupDatabase();
-            setError(null);
-            alert(`Đã dọn dẹp ${removed} ảnh không còn tồn tại trên đĩa.`);
+            setAlertData({ isOpen: true, title: "Dọn dẹp thành công", desc: `Đã dọn dẹp ${removed} ảnh không còn tồn tại trên đĩa.` });
             window.dispatchEvent(new Event("refresh_photos"));
         } catch (e) {
             setError(String(e));
+            onOpenChange(true); // Re-open settings on error
         } finally {
             setCleaning(false);
         }
     };
 
     const handleReset = async () => {
-        if (!confirm("Bạn có chắc chắn muốn xóa toàn bộ dữ liệu database? Thao tác này KHÔNG XÓA ảnh trên đĩa của bạn, nhưng sẽ làm mất toàn bộ thông tin nhận diện AI, người, và lịch sử tìm kiếm.")) {
-            return;
-        }
         setResetting(true);
         try {
             await AuraSeekApi.resetDatabase();
             setSourceFolder("");
             onSourceDirChange?.("");
             setError(null);
-            alert("Đã đặt lại database thành công.");
-            window.location.reload(); // Hard reload to clear all state
+            setResetConfirmOpen(false);
+            
+            // Close settings before showing the success alert to prevent Z-index issues
+            onOpenChange(false);
+            setTimeout(() => {
+                setAlertData({ isOpen: true, title: "Đặt lại thành công", desc: "Đã đặt lại database và cấu hình thành công. Ứng dụng sẽ tải lại." });
+            }, 100);
         } catch (e) {
             setError(String(e));
-        } finally {
+            setResetConfirmOpen(false);
             setResetting(false);
+            onOpenChange(true); // Re-open settings on error
+        }
+    };
+
+    const handleAlertClose = () => {
+        const wasReset = alertData.title.includes("Đặt lại");
+        setAlertData({ isOpen: false, title: "", desc: "" });
+        if (wasReset) {
+            window.location.reload();
         }
     };
 
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[520px] p-0 overflow-hidden bg-background/95 backdrop-blur-xl shadow-2xl border-border/40 sm:rounded-2xl">
-                <DialogHeader className="px-6 py-5 border-b border-border/10 bg-muted/30">
-                    <DialogTitle className="flex items-center gap-2 text-xl font-medium tracking-tight text-foreground">
-                        <Settings className="w-5 h-5 text-primary" />
-                        Cài đặt
-                    </DialogTitle>
-                    <DialogDescription className="mt-1.5 leading-relaxed">
-                        Quản lý thư viện ảnh AuraSeek
-                    </DialogDescription>
-                </DialogHeader>
+        <>
+            <Dialog open={open} onOpenChange={onOpenChange}>
+                <DialogContent className="sm:max-w-[520px] p-0 overflow-hidden bg-background/95 backdrop-blur-xl shadow-2xl border-border/40 sm:rounded-2xl">
+                    <DialogHeader className="px-6 py-5 border-b border-border/10 bg-muted/30">
+                        <DialogTitle className="flex items-center gap-2 text-xl font-medium tracking-tight text-foreground">
+                            <Settings className="w-5 h-5 text-primary" />
+                            Cài đặt
+                        </DialogTitle>
+                        <DialogDescription className="mt-1.5 leading-relaxed">
+                            Quản lý thư viện ảnh AuraSeek
+                        </DialogDescription>
+                    </DialogHeader>
 
-                <div className="px-6 py-6 flex flex-col gap-6 overflow-y-auto max-h-[70vh]">
-                    <SettingsSourceSection
-                        sourceFolder={sourceFolder}
-                        setSourceFolder={(value: string) => {
-                            setSourceFolder(value);
-                            setShowWarning(false);
-                            setSaved(false);
-                        }}
-                        saving={saving}
-                        saved={saved}
-                        showWarning={showWarning}
-                        onConfirmWarning={handleSave}
-                        onCancelWarning={() => setShowWarning(false)}
-                        onSave={handleSave}
-                        hasExistingSource={!!currentSourceDir}
-                        hasChanged={hasChanged}
-                        setShowWarning={setShowWarning}
-                        setError={setError}
-                    />
+                    <div className="px-6 py-6 flex flex-col gap-6 overflow-y-auto max-h-[70vh]">
+                        <SettingsSourceSection
+                            sourceFolder={sourceFolder}
+                            setSourceFolder={(value: string) => {
+                                setSourceFolder(value);
+                                setShowWarning(false);
+                                setSaved(false);
+                            }}
+                            saving={saving}
+                            saved={saved}
+                            showWarning={showWarning}
+                            onConfirmWarning={handleSave}
+                            onCancelWarning={() => setShowWarning(false)}
+                            onSave={handleSave}
+                            hasExistingSource={!!currentSourceDir}
+                            hasChanged={hasChanged}
+                            setShowWarning={setShowWarning}
+                            setError={setError}
+                        />
 
-                    <SettingsDatabaseSection
-                        cleaning={cleaning}
-                        resetting={resetting}
-                        onCleanup={handleCleanup}
-                        onReset={handleReset}
-                    />
+                        <SettingsDatabaseSection
+                            cleaning={cleaning}
+                            resetting={resetting}
+                            onCleanup={handleCleanupClick}
+                            onReset={() => {
+                                onOpenChange(false);
+                                setResetConfirmOpen(true);
+                            }}
+                        />
 
-                    <SettingsErrorAlert error={error} />
+                        <SettingsErrorAlert error={error} />
 
-                    <div className="pt-4 border-t border-border/10 flex flex-col items-center justify-center text-center space-y-3">
-                        <div className="w-12 h-12 bg-linear-to-tr from-primary to-indigo-500 rounded-2xl flex items-center justify-center shadow-lg shadow-primary/20">
-                            <Cpu className="w-6 h-6 text-white" />
-                        </div>
-                        <div>
-                            <h3 className="text-base font-medium tracking-tight text-foreground">AuraSeek</h3>
-                            <p className="text-xs text-muted-foreground mt-0.5">Phiên bản 1.0.0 · SurrealDB + Local AI · Offline</p>
+                        <div className="pt-4 border-t border-border/10 flex flex-col items-center justify-center text-center space-y-3">
+                            <div className="w-12 h-12 bg-linear-to-tr from-primary to-indigo-500 rounded-2xl flex items-center justify-center shadow-lg shadow-primary/20">
+                                <Cpu className="w-6 h-6 text-white" />
+                            </div>
+                            <div>
+                                <h3 className="text-base font-medium tracking-tight text-foreground">AuraSeek</h3>
+                                <p className="text-xs text-muted-foreground mt-0.5">Phiên bản 1.0.0 · SurrealDB + Local AI · Offline</p>
+                            </div>
                         </div>
                     </div>
-                </div>
-            </DialogContent>
-        </Dialog>
+                </DialogContent>
+            </Dialog>
+
+            <ConfirmDialog
+                isOpen={resetConfirmOpen}
+                title="Đặt lại thư viện về ban đầu"
+                description="Bạn có chắc chắn muốn xóa toàn bộ dữ liệu database? Thao tác này KHÔNG XÓA ảnh trên đĩa của bạn, nhưng sẽ làm mất toàn bộ thông tin nhận diện AI, người, và lịch sử tìm kiếm."
+                confirmText="Xóa dữ liệu"
+                isDestructive
+                isLoading={resetting}
+                onConfirm={handleReset}
+                onCancel={() => {
+                    setResetConfirmOpen(false);
+                    onOpenChange(true);
+                }}
+            />
+
+            <ConfirmDialog
+                isOpen={alertData.isOpen}
+                title={alertData.title}
+                description={alertData.desc}
+                type="alert"
+                onConfirm={handleAlertClose}
+                onCancel={handleAlertClose}
+            />
+        </>
     );
 }

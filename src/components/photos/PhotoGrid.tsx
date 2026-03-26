@@ -14,7 +14,7 @@ export function PhotoGrid({
   photos,
   onPhotoClick,
   selectionMode      = false,
-  showBbox           = true,
+  showBbox           = false,
   overlayShowFaces   = true,
   overlayShowLabels  = true,
 }: PhotoGridProps) {

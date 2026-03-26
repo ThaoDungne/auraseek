@@ -5,6 +5,7 @@ import { useState, useRef, useEffect } from "react";
 import { AuraSeekApi } from "@/lib/api";
 import { SegmentOverlay } from "../photos/SegmentOverlay";
 import { FullScreenTopBar } from "./FullScreenTopBar";
+import { ConfirmDialog } from "../ui/ConfirmDialog";
 
 export function FullScreenPhotoViewer({
     photo,
@@ -27,6 +28,8 @@ export function FullScreenPhotoViewer({
   const [activeObjectIndex, setActiveObjectIndex] = useState<number | null>(null);
     const [isFavorite, setIsFavorite] = useState(photo.favorite || false);
     const [isSharing, setIsSharing] = useState(false);
+    const [isHardDeleteOpen, setIsHardDeleteOpen] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
 
     useEffect(() => {
         const saved = localStorage.getItem(`auraseek_bbox_${photo.id}`);
@@ -266,6 +269,20 @@ export function FullScreenPhotoViewer({
         }
     };
 
+    const handleHardDelete = async () => {
+        try {
+            setIsDeleting(true);
+            await AuraSeekApi.hardDeleteTrashItem(photo.id);
+            window.dispatchEvent(new Event("refresh_photos"));
+            onClose();
+        } catch (e) {
+            console.error("Hard delete failed", e);
+        } finally {
+            setIsDeleting(false);
+            setIsHardDeleteOpen(false);
+        }
+    };
+
     const handleRestoreFromTrash = async () => {
         try {
             await AuraSeekApi.restoreFromTrash(photo.id);
@@ -326,6 +343,7 @@ export function FullScreenPhotoViewer({
                     onRestoreFromTrash={handleRestoreFromTrash}
                     onUnhide={handleUnhide}
                     onMoveToTrash={handleMoveToTrash}
+                    onHardDelete={isTrashMode ? () => setIsHardDeleteOpen(true) : undefined}
                     isSharing={isSharing}
                     showInfo={showInfo}
                     onToggleInfo={() => setShowInfo((p) => !p)}
@@ -455,6 +473,17 @@ export function FullScreenPhotoViewer({
                     </div>
                 </div>
             )}
+            
+            <ConfirmDialog
+                isOpen={isHardDeleteOpen}
+                title="Xóa vĩnh viễn ảnh"
+                description="Bạn có chắc muốn xóa ảnh này khỏi ổ đĩa không? Hành động này sẽ không thể hoàn tác."
+                confirmText="Xóa vĩnh viễn"
+                isDestructive
+                isLoading={isDeleting}
+                onConfirm={handleHardDelete}
+                onCancel={() => setIsHardDeleteOpen(false)}
+            />
         </div>
     );
 }

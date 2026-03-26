@@ -20,6 +20,7 @@ interface FullScreenTopBarProps {
     onRestoreFromTrash: () => void;
     onUnhide: () => void;
     onMoveToTrash: () => void;
+    onHardDelete?: () => void;
     isSharing: boolean;
     showInfo: boolean;
     onToggleInfo: () => void;
@@ -44,6 +45,7 @@ export function FullScreenTopBar({
     onRestoreFromTrash,
     onUnhide,
     onMoveToTrash,
+    onHardDelete,
     isSharing,
     showInfo,
     onToggleInfo,
@@ -154,6 +156,24 @@ export function FullScreenTopBar({
                                 Khôi phục
                             </TooltipContent>
                         </Tooltip>
+
+                        {onHardDelete && (
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="rounded-full text-white hover:text-destructive-foreground hover:bg-destructive"
+                                        onClick={onHardDelete}
+                                    >
+                                        <Trash2 className="w-5 h-5" />
+                                    </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="bottom" className="text-xs">
+                                    Xóa vĩnh viễn
+                                </TooltipContent>
+                            </Tooltip>
+                        )}
                     </>
                 ) : isHiddenMode ? (
                     <>

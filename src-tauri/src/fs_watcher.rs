@@ -131,7 +131,7 @@ pub fn start_watching(
 
                     // RAM check
                     let ram_pct = crate::available_ram_percent();
-                    if ram_pct < 40.0 {
+                    if ram_pct < 10.0 {
                         crate::log_warn!("⚠️ FS watcher: not enough RAM ({:.1}%), skipping batch", ram_pct);
                         let mut st = sync_status.lock().await;
                         *st = SyncStatus {

@@ -283,6 +283,14 @@ pub struct DuplicateItem {
     pub thumbnail_path: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomAlbum {
+    pub id: String,
+    pub title: String,
+    pub count: u32,
+    pub cover_url: Option<String>,
+}
+
 /// Generic record ID helper (for .take())
 #[derive(Debug, Deserialize, SurrealValue)]
 pub struct IdOnly {

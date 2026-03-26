@@ -5,6 +5,7 @@ import {
     ChevronDown, AlertTriangle, RefreshCw, Loader2
 } from "lucide-react";
 import { AuraSeekApi, type DuplicateGroup, localFileUrl, streamFileUrlSync } from "@/lib/api";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 function formatSize(bytes: number): string {
     if (bytes === 0) return "0 B";
@@ -26,6 +27,14 @@ export function DuplicatesView({ mediaType }: DuplicatesViewProps) {
     const [markedForDelete, setMarkedForDelete] = useState<Record<string, Set<string>>>({});
     const [deletingGroup, setDeletingGroup] = useState<string | null>(null);
     const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+    
+    // Modal state for single group delete
+    const [confirmOpen, setConfirmOpen] = useState(false);
+    const [targetGroupId, setTargetGroupId] = useState<string | null>(null);
+    
+    // Modal state for delete all
+    const [confirmAllOpen, setConfirmAllOpen] = useState(false);
+    const [isDeletingAll, setIsDeletingAll] = useState(false);
 
     const fetchDuplicates = useCallback(async () => {
         setIsLoading(true);
@@ -84,11 +93,13 @@ export function DuplicatesView({ mediaType }: DuplicatesViewProps) {
             setError(String(err));
         } finally {
             setDeletingGroup(null);
+            setConfirmOpen(false);
+            setTargetGroupId(null);
         }
     };
 
     const deleteAllMarked = async () => {
-        setIsLoading(true);
+        setIsDeletingAll(true);
         try {
             for (const [, set] of Object.entries(markedForDelete)) {
                 for (const mediaId of set) {
@@ -99,7 +110,8 @@ export function DuplicatesView({ mediaType }: DuplicatesViewProps) {
         } catch (err) {
             setError(String(err));
         } finally {
-            setIsLoading(false);
+            setIsDeletingAll(false);
+            setConfirmAllOpen(false);
         }
     };
 
@@ -140,16 +152,27 @@ export function DuplicatesView({ mediaType }: DuplicatesViewProps) {
                                 : "Phát hiện ảnh trùng lặp bằng Hash chính xác, pHash nhận diện ảnh tương tự, và AI embedding (ngưỡng ≥ 97%)."}
                         </p>
                     </div>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={fetchDuplicates}
-                        disabled={isLoading}
-                        className="rounded-full gap-2 shrink-0"
-                    >
-                        <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
-                        Quét lại
-                    </Button>
+                    <div className="flex gap-2">
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={fetchDuplicates}
+                            disabled={isLoading}
+                            className="rounded-full gap-2 shrink-0"
+                        >
+                            <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
+                            Quét lại
+                        </Button>
+                        <Button 
+                            disabled={isLoading || groups.length === 0 || totalDelete === 0} 
+                            onClick={() => setConfirmAllOpen(true)}
+                            className="rounded-full shadow-lg shadow-primary/10 gap-2"
+                            variant="destructive"
+                        >
+                            {isDeletingAll ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
+                            Xoá tất cả {totalDelete} mục đã chọn
+                        </Button>
+                    </div>
                 </div>
 
                 {/* Summary bar */}
@@ -174,7 +197,7 @@ export function DuplicatesView({ mediaType }: DuplicatesViewProps) {
                                 variant="destructive"
                                 size="sm"
                                 className="rounded-full gap-2"
-                                onClick={deleteAllMarked}
+                                onClick={() => setConfirmAllOpen(true)}
                                 disabled={isLoading}
                             >
                                 <Trash2 className="w-4 h-4" />
@@ -220,7 +243,6 @@ export function DuplicatesView({ mediaType }: DuplicatesViewProps) {
                         {groups.map((group) => {
                             const deleted = markedForDelete[group.group_id] ?? new Set();
                             const isExpanded = expandedGroups.has(group.group_id);
-                            const isDeleting = deletingGroup === group.group_id;
                             const deleteCount = deleted.size;
 
                             return (
@@ -245,17 +267,18 @@ export function DuplicatesView({ mediaType }: DuplicatesViewProps) {
                                         </div>
                                         <div className="flex items-center gap-2 shrink-0">
                                             {deleteCount > 0 && (
-                                                <Button
-                                                    variant="outline"
-                                                    size="sm"
-                                                    className="h-8 rounded-full text-xs hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30"
-                                                    disabled={isDeleting}
-                                                    onClick={(e) => { e.stopPropagation(); deleteMarked(group.group_id); }}
+                                                <Button 
+                                                    variant="destructive" size="sm" 
+                                                    className="bg-destructive/10 text-destructive hover:bg-destructive hover:text-destructive-foreground border-destructive/20 rounded-xl"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setTargetGroupId(group.group_id);
+                                                        setConfirmOpen(true);
+                                                    }}
+                                                    disabled={deletingGroup === group.group_id || (markedForDelete[group.group_id]?.size ?? 0) === 0}
                                                 >
-                                                    {isDeleting
-                                                        ? <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                                                        : <Trash2 className="w-3 h-3 mr-1" />}
-                                                    Xóa {deleteCount} mục
+                                                    {deletingGroup === group.group_id ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5 mr-1.5" />}
+                                                    Xoá {markedForDelete[group.group_id]?.size ?? 0} bản sao
                                                 </Button>
                                             )}
                                             <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${isExpanded ? "rotate-180" : ""}`} />
@@ -354,6 +377,29 @@ export function DuplicatesView({ mediaType }: DuplicatesViewProps) {
 
                 <div className="h-20" />
             </div>
+
+            <ConfirmDialog
+                isOpen={confirmOpen}
+                title="Xóa ảnh trùng lặp"
+                description={`Bạn có chắc muốn đưa ${markedForDelete[targetGroupId!]?.size ?? 0} bản sao này vào Thùng rác không?`}
+                confirmText="Đưa vào Thùng rác"
+                isLoading={deletingGroup !== null}
+                onConfirm={() => targetGroupId && deleteMarked(targetGroupId)}
+                onCancel={() => {
+                    setConfirmOpen(false);
+                    setTargetGroupId(null);
+                }}
+            />
+
+            <ConfirmDialog
+                isOpen={confirmAllOpen}
+                title="Xóa tất cả ảnh trùng"
+                description="Hành động này sẽ đưa tất cả các bản sao đã chọn vào Thùng rác. Bạn có chắc chắn muốn tiếp tục?"
+                confirmText="Tiếp tục"
+                isLoading={isDeletingAll}
+                onConfirm={deleteAllMarked}
+                onCancel={() => setConfirmAllOpen(false)}
+            />
         </div>
     );
 }

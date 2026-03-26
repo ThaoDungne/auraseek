@@ -19,7 +19,7 @@ export function PhotoCard({
   photo,
   onClick,
   selectionMode     = false,
-  showBbox          = true,
+  showBbox          = false,
   overlayShowFaces  = true,
   overlayShowLabels = true,
 }: PhotoCardProps) {

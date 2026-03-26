@@ -179,6 +179,10 @@ export const AuraSeekApi = {
         return invoke<SearchResult[]>("cmd_search_filter_only", { filters });
     },
 
+    async deletePerson(faceId: string): Promise<void> {
+        return invoke("cmd_delete_person", { faceId });
+    },
+
     async getTimeline(limit?: number): Promise<TimelineGroup[]> {
         return invoke<TimelineGroup[]>("cmd_get_timeline", { limit });
     },
@@ -253,6 +257,10 @@ export const AuraSeekApi = {
         return invoke<void>("cmd_empty_trash");
     },
 
+    async hardDeleteTrashItem(mediaId: string): Promise<void> {
+        return invoke<void>("cmd_hard_delete_trash_item", { mediaId });
+    },
+
     async hidePhoto(mediaId: string): Promise<void> {
         return invoke<void>("cmd_hide_photo", { mediaId });
     },
@@ -263,6 +271,32 @@ export const AuraSeekApi = {
 
     async getHiddenPhotos(): Promise<TimelineGroup[]> {
         return invoke<TimelineGroup[]>("cmd_get_hidden_photos");
+    },
+
+    // --- Albums ---
+
+    async createAlbum(title: string): Promise<string> {
+        return invoke<string>("cmd_create_album", { title });
+    },
+
+    async getAlbums(): Promise<{ id: string, title: string, count: number, cover_url: string | null }[]> {
+        return invoke<{ id: string, title: string, count: number, cover_url: string | null }[]>("cmd_get_albums");
+    },
+
+    async addToAlbum(albumId: string, mediaIds: string[]): Promise<void> {
+        return invoke<void>("cmd_add_to_album", { albumId, mediaIds });
+    },
+
+    async removeFromAlbum(albumId: string, mediaIds: string[]): Promise<void> {
+        return invoke<void>("cmd_remove_from_album", { albumId, mediaIds });
+    },
+
+    async deleteAlbum(albumId: string): Promise<void> {
+        return invoke<void>("cmd_delete_album", { albumId });
+    },
+
+    async getAlbumPhotos(albumId: string): Promise<TimelineGroup[]> {
+        return invoke<TimelineGroup[]>("cmd_get_album_photos", { albumId });
     },
 
     async authenticateOs(): Promise<boolean> {

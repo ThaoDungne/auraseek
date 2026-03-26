@@ -15,6 +15,16 @@ use std::process::Command;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+fn hidden_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
+
 use crate::db::{DbOperations, SurrealDb};
 use crate::db::models::{ObjectEntry, FaceEntry, Bbox, PersonDoc};
 use crate::processor::AuraSeekEngine;
@@ -297,7 +307,7 @@ pub async fn process_video(
 // ─── Private helpers ─────────────────────────────────────────────────────────
 
 pub(crate) fn probe_video(video_path: &str) -> Result<(f64, u64)> {
-    let fps_out = Command::new("ffprobe")
+    let fps_out = hidden_command("ffprobe")
         .args(["-v","error","-select_streams","v:0","-show_entries",
                "stream=r_frame_rate","-of","default=noprint_wrappers=1:nokey=1", video_path])
         .output()?;
@@ -305,7 +315,7 @@ pub(crate) fn probe_video(video_path: &str) -> Result<(f64, u64)> {
         .unwrap_or(30.0);
 
     let mut parsed_frames = 0u64;
-    let frames_out = Command::new("ffprobe")
+    let frames_out = hidden_command("ffprobe")
         .args(["-v","error","-select_streams","v:0","-show_entries",
                "stream=nb_frames","-of","default=noprint_wrappers=1:nokey=1", video_path])
         .output()?;
@@ -314,7 +324,7 @@ pub(crate) fn probe_video(video_path: &str) -> Result<(f64, u64)> {
         parsed_frames = n;
     }
 
-    let dur_out = Command::new("ffprobe")
+    let dur_out = hidden_command("ffprobe")
         .args(["-v","error","-show_entries","format=duration",
                "-of","default=noprint_wrappers=1:nokey=1", video_path])
         .output()
@@ -330,7 +340,7 @@ pub(crate) fn probe_video(video_path: &str) -> Result<(f64, u64)> {
 
 pub(crate) fn detect_scenes(video_path: &str, fps: f64) -> Result<Vec<u64>> {
     let filter = format!("select='gt(scene,{})',showinfo", SCENE_THRESHOLD);
-    let output = Command::new("ffmpeg")
+    let output = hidden_command("ffmpeg")
         .args(["-i", video_path, "-vf", &filter, "-vsync","vfr","-f","null","-"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
@@ -351,7 +361,7 @@ pub(crate) fn detect_scenes(video_path: &str, fps: f64) -> Result<Vec<u64>> {
 
 pub(crate) fn extract_frame(video_path: &str, frame_idx: u64, fps: f64, out: &Path) -> Result<()> {
     let ts  = format!("{:.6}", frame_idx as f64 / fps);
-    let status = Command::new("ffmpeg")
+    let status = hidden_command("ffmpeg")
         .args(["-y","-ss",&ts,"-i",video_path,"-vframes","1","-q:v","3",
                &out.to_string_lossy()])
         .stdout(std::process::Stdio::null())
@@ -377,6 +387,7 @@ fn parse_pts_time(line: &str) -> Option<f64> {
     rest[..end].parse().ok()
 }
 
+#[allow(dead_code)]
 fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() { return 0.0; }
     let dot: f32 = a.iter().zip(b).map(|(x,y)| x*y).sum();
