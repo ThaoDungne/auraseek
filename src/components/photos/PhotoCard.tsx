@@ -13,6 +13,7 @@ type PhotoCardProps = {
   showBbox?: boolean;
   overlayShowFaces?: boolean;
   overlayShowLabels?: boolean;
+  className?: string;
 };
 
 export function PhotoCard({
@@ -22,6 +23,7 @@ export function PhotoCard({
   showBbox          = true,
   overlayShowFaces  = true,
   overlayShowLabels = true,
+  className,
 }: PhotoCardProps) {
 
   const { selectedIds, toggleSelection } = useSelection();
@@ -84,7 +86,7 @@ export function PhotoCard({
       onClick={selectionMode ? handleSelect : onClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      className="group relative block aspect-4/3 overflow-hidden bg-background"
+      className={cn("group relative block overflow-hidden bg-background rounded-[20px]", className || "aspect-4/3")}
     >
       <div className={cn(
         "w-full h-full transition-all duration-200 ease-out relative",

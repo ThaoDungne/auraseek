@@ -160,9 +160,8 @@ export function TimelineView({
         <div className="space-y-6 sm:space-y-8 pr-6">
           {sections.map((section) => (
             <section key={section.id} id={`section-${section.id}`} className="space-y-3 pt-2">
-              <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-4 py-1.5 text-[13px] font-bold text-slate-100 shadow-2xl backdrop-blur-md">
+              <div className="font-['Roboto'] font-normal text-[18px] text-[#000000] dark:text-[#E0E0E0] mb-2 px-1">
                 {section.label}
-                <span className="text-[11px] font-medium text-slate-400">· {section.photos.length} mục</span>
               </div>
 
               <PhotoGrid

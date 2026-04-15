@@ -1,9 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { SidebarProvider } from "@/components/ui/sidebar";
-import { AppSidebar } from "./components/layout/AppSidebar";
-import { AppTopbar } from "./components/layout/AppTopbar";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { NewLayout } from "./components/layout/NewLayout";
 import { SelectionProvider } from "@/contexts/SelectionContext";
 import { TimelineView } from "@/views/timeline";
 import { PeopleView } from "@/views/people/PeopleView";
@@ -541,49 +539,44 @@ function App() {
   return (
     <SelectionProvider>
       <TooltipProvider>
-        <SidebarProvider>
-          {showFirstRun && <FirstRunModal onComplete={handleFirstRunComplete} />}
+        {showFirstRun && <FirstRunModal onComplete={handleFirstRunComplete} />}
 
-          <AppSidebar
-            activeKey={route.view}
-            onNavClick={handleNavClick}
-            sourceDir={sourceDir}
-            onSourceDirChange={setSourceDir}
-          />
-
-          {/* Global drag-over indicator */}
-          {isDragOver && (
-            <div className="fixed inset-0 z-100 pointer-events-none flex items-center justify-center bg-indigo-500/10 backdrop-blur-[2px] border-4 border-dashed border-indigo-400/60 rounded-xl m-2">
-              <div className="bg-background/90 rounded-2xl px-8 py-5 shadow-2xl border border-indigo-400/30 text-center">
-                <p className="text-lg font-semibold text-indigo-400">Thả ảnh vào đây</p>
-                <p className="text-sm text-muted-foreground mt-1">Ảnh sẽ được lưu vào thư mục nguồn và xử lý AI tự động</p>
-              </div>
+        {/* Global drag-over indicator */}
+        {isDragOver && (
+          <div className="fixed inset-0 z-[100] pointer-events-none flex items-center justify-center bg-indigo-500/10 backdrop-blur-[2px] border-4 border-dashed border-indigo-400/60 rounded-xl m-2">
+            <div className="bg-background/90 rounded-2xl px-8 py-5 shadow-2xl border border-indigo-400/30 text-center">
+              <p className="text-lg font-semibold text-indigo-400">Thả ảnh vào đây</p>
+              <p className="text-sm text-muted-foreground mt-1">Ảnh sẽ được lưu vào thư mục nguồn và xử lý AI tự động</p>
             </div>
-          )}
+          </div>
+        )}
 
-          {/* Model download / first-run loading screen */}
-          {(needsDownload || (downloadProgress && !isInitialized)) && (
-            <ModelDownloadScreen event={downloadProgress} />
-          )}
+        {/* Model download / first-run loading screen */}
+        {(needsDownload || (downloadProgress && !isInitialized)) && (
+          <ModelDownloadScreen event={downloadProgress} />
+        )}
 
-          <main className="flex flex-col flex-1 h-screen overflow-hidden">
-            <AppTopbar
-              searchQuery={searchQuery}
-              onSearchQueryChange={setSearchQuery}
-              searchImagePath={searchImagePath}
-              onSearchImageChange={setSearchImagePath}
-              onSearchSubmit={handleSearchSubmit}
-              isSearching={isSearching}
-              onFiltersChange={handleFiltersChange}
-              activeFilters={activeFilters}
-              initError={initError}
-              selectionMode={selectionMode}
-              onSelectionModeChange={setSelectionMode}
-              syncStatus={syncStatus}
-            />
-            {renderView()}
-          </main>
-        </SidebarProvider>
+        <NewLayout
+          activeKey={route.view}
+          onNavClick={handleNavClick}
+          sourceDir={sourceDir}
+          onSourceDirChange={setSourceDir}
+          searchQuery={searchQuery}
+          onSearchQueryChange={setSearchQuery}
+          searchImagePath={searchImagePath}
+          onSearchImageChange={setSearchImagePath}
+          onSearchSubmit={handleSearchSubmit}
+          isSearching={isSearching}
+          onFiltersChange={handleFiltersChange}
+          activeFilters={activeFilters}
+          initError={initError}
+          selectionMode={selectionMode}
+          onSelectionModeChange={setSelectionMode}
+          syncStatus={syncStatus}
+          totalImages={photos.length}
+        >
+          {renderView()}
+        </NewLayout>
       </TooltipProvider>
     </SelectionProvider>
   );
