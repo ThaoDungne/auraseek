@@ -27,3 +27,6 @@ auraseek_data/*
 src-tauri/binaries/*
 src-tauri/input1/*
 src-tauri/output/*
+
+# Environment variables (machine-specific)
+src-tauri/.env

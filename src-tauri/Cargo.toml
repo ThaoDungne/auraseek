@@ -37,6 +37,13 @@ tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.5", features = ["fs", "cors"] }
 flate2 = "1.0"
 tar = "0.4"
+thiserror = "2.0.18"
+num_cpus = "1.17.0"
+dotenvy = "0.15.7"
+
+[features]
+default = []
+debug-tools = []
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
