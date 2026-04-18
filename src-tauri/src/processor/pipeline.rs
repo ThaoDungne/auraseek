@@ -23,8 +23,8 @@ pub struct EngineOutput {
 
 fn default_config() -> EngineConfig {
     EngineConfig {
-        vision_path:  "assets/models/vision_vi-sclir.onnx".into(),
-        text_path:    "assets/models/text_vi-sclir.onnx".into(),
+        vision_path:  "assets/models/vision_visclir.onnx".into(),
+        text_path:    "assets/models/text_visclir.onnx".into(),
         yolo_path:    "assets/models/yolo26n-seg.onnx".into(),
         yunet_path:   "assets/models/face_detection_yunet_2022mar.onnx".into(),
         sface_path:   "assets/models/face_recognition_sface_2021dec.onnx".into(),
@@ -48,8 +48,8 @@ pub struct EngineConfig {
 impl EngineConfig {
     pub fn new_with_dir(base: &std::path::Path) -> Self {
         Self {
-            vision_path: base.join("models/vision_vi-sclir.onnx").to_string_lossy().into_owned(),
-            text_path: base.join("models/text_vi-sclir.onnx").to_string_lossy().into_owned(),
+            vision_path: base.join("models/vision_visclir.onnx").to_string_lossy().into_owned(),
+            text_path: base.join("models/text_visclir.onnx").to_string_lossy().into_owned(),
             yolo_path: base.join("models/yolo26n-seg.onnx").to_string_lossy().into_owned(),
             yunet_path: base.join("models/face_detection_yunet_2022mar.onnx").to_string_lossy().into_owned(),
             sface_path: base.join("models/face_recognition_sface_2021dec.onnx").to_string_lossy().into_owned(),

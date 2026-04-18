@@ -45,7 +45,12 @@ impl FaceModel {
     pub fn new(yunet_path: &str, sface_path: &str) -> Result<Self> {
         let size = Size::new(320, 320);
         
-        let (backend, target, provider_name) = if opencv::core::get_cuda_enabled_device_count()? > 0 {
+        #[cfg(target_os = "windows")]
+        let cuda_count = opencv::core::get_cuda_enabled_device_count().unwrap_or(0);
+        #[cfg(not(target_os = "windows"))]
+        let cuda_count: i32 = 0;
+
+        let (backend, target, provider_name) = if cuda_count > 0 {
             (opencv::dnn::DNN_BACKEND_CUDA, opencv::dnn::DNN_TARGET_CUDA, "CUDA")
         } else {
             (opencv::dnn::DNN_BACKEND_OPENCV, opencv::dnn::DNN_TARGET_CPU, "CPU")
@@ -285,7 +290,12 @@ impl FaceModel {
         let s = frame.size()?;
         if s != self.detector_size {
             self.detector_size = s;
-            let (backend, target) = if opencv::core::get_cuda_enabled_device_count()? > 0 {
+            #[cfg(target_os = "windows")]
+            let cuda_count = opencv::core::get_cuda_enabled_device_count().unwrap_or(0);
+            #[cfg(not(target_os = "windows"))]
+            let cuda_count: i32 = 0;
+
+            let (backend, target) = if cuda_count > 0 {
                 (opencv::dnn::DNN_BACKEND_CUDA, opencv::dnn::DNN_TARGET_CUDA)
             } else {
                 (opencv::dnn::DNN_BACKEND_OPENCV, opencv::dnn::DNN_TARGET_CPU)

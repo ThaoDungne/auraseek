@@ -2,6 +2,7 @@ import { Plus, Minus } from "lucide-react";
 import type { Photo } from "@/types/photo.type";
 import { PhotoInfoPanel } from "./PhotoInfoPanel";
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { AuraSeekApi } from "@/lib/api";
 import { SegmentOverlay } from "../photos/SegmentOverlay";
 import { FullScreenTopBar } from "./FullScreenTopBar";
@@ -306,8 +307,8 @@ export function FullScreenPhotoViewer({
     setShowMask((prev) => !prev);
   };
 
-    return (
-        <div className="fixed inset-0 z-50 flex bg-background w-full h-full text-foreground">
+    return createPortal(
+        <div className="fixed inset-0 z-[9999] flex bg-background w-full h-full text-foreground">
             <div className="relative flex-1 flex flex-col overflow-hidden bg-black transition-all">
                 <FullScreenTopBar
                     hasOverlays={hasOverlays}
@@ -445,7 +446,7 @@ export function FullScreenPhotoViewer({
                 </div>
             </div>
 
-            {showInfo && (
+      {showInfo && (
                 <div className="w-[360px] md:w-[400px] shrink-0 border-l border-border/20 bg-background flex flex-col h-full overflow-hidden transition-all shadow-xl">
                     <div className="h-14 flex items-center px-4 border-b border-border/10">
                         <h2 className="text-lg font-medium tracking-tight">Thông tin</h2>
@@ -455,6 +456,7 @@ export function FullScreenPhotoViewer({
                     </div>
                 </div>
             )}
-        </div>
+        </div>,
+        document.body
     );
 }

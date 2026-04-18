@@ -47,14 +47,7 @@
     "externalBin": [
       "binaries/surreal"
     ],
-    "resources": [
-      "binaries/opencv_core4.dll",
-      "binaries/opencv_imgcodecs4.dll",
-      "binaries/opencv_imgproc4.dll",
-      "binaries/opencv_dnn4.dll",
-      "binaries/opencv_objdetect4.dll",
-      "binaries/opencv_highgui4.dll"
-    ],
+    "resources": [],
     "linux": {
       "deb": {
         "depends": [

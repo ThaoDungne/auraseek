@@ -1,10 +1,16 @@
 import React, { useRef, useState, useCallback, useEffect } from "react";
-import { Search, Image as ImageIcon, Upload, X, History, Filter, MousePointerClick, RefreshCw, CheckCircle2, AlertCircle, Film, Library, Star, Users, CopySlash, Lock, Trash2, Grid3X3, Settings } from "lucide-react";
+import {
+  Search, Image as ImageIcon, Upload, X, History, Filter,
+  RefreshCw, CheckCircle2, AlertCircle, Film, Library, Users,
+  CopySlash, Trash2, Grid3X3, Settings, LayoutGrid,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSelection } from "@/contexts/SelectionContext";
 import { FilterPanel } from "@/components/common/FilterPanel";
 import { SettingsModal } from "@/components/common/SettingsModal";
+import { SpaceNodes } from "@/components/common/SpaceNodes";
 import type { ActiveFilters } from "@/App";
+import { cn } from "@/lib/utils";
 import { AuraSeekApi, type SyncStatus } from "@/lib/api";
 import {
   DropdownMenu,
@@ -21,7 +27,6 @@ interface NewLayoutProps {
   onNavClick?: (key: string) => void;
   sourceDir?: string;
   onSourceDirChange?: (dir: string) => void;
-  // Topbar props
   totalImages?: number;
   searchQuery?: string;
   onSearchQueryChange?: (q: string) => void;
@@ -43,7 +48,6 @@ export function NewLayout({
   onNavClick,
   sourceDir = "",
   onSourceDirChange,
-  // Topbar props
   totalImages = 0,
   searchQuery = "",
   onSearchQueryChange,
@@ -63,7 +67,7 @@ export function NewLayout({
   const [searchFocused, setSearchFocused] = useState(false);
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
   const [showSettings, setShowSettings] = useState(false);
-  
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const composingRef = useRef(false);
@@ -87,7 +91,7 @@ export function NewLayout({
       const history = await AuraSeekApi.getSearchHistory(8);
       setSearchHistory(history.map((h: any) => h.query).filter(Boolean));
     } catch {
-      setSearchHistory(["Chó chạy trên cỏ", "Biển đà nẵng", "Gia đình"]);
+      setSearchHistory(["Sinh nhật 15/06/1995", "Kỷ niệm 20/12/1988", "Ngày sinh 05/02/2000"]);
     }
   }, []);
 
@@ -128,204 +132,231 @@ export function NewLayout({
   const imageFileName = searchImagePath ? searchImagePath.split(/[/\\]/).pop() || searchImagePath : null;
   const currentInputValue = searchInputRef.current?.value || searchQuery || "";
 
-  // Menu items config (similar to old sidebar)
+  // Menu items config (Floating charcoal style)
   const menuItems = [
+    { title: "Tất cả", icon: LayoutGrid, key: "all" },
     { title: "Ảnh", icon: ImageIcon, key: "timeline" },
     { title: "Video", icon: Film, key: "videos" },
     { title: "Bộ sưu tập", icon: Library, key: "albums" },
-    { title: "Người", icon: Users, key: "people" },
     { title: "Thùng rác", icon: Trash2, key: "trash" },
     { title: "Kiểm tra trùng lặp", icon: CopySlash, key: "duplicates" },
   ];
 
   return (
-    <div className="relative w-full h-screen overflow-hidden flex flex-col bg-[#f4f3ff] dark:bg-background transition-colors duration-300">
+    <div className="relative w-full h-screen overflow-hidden flex flex-col bg-white">
       
-      {/* ── Background Wave Header ── */}
-      <div className="absolute inset-x-0 top-0 h-[250px] sm:h-[300px] overflow-hidden pointer-events-none z-0">
-        <div className="absolute inset-0 bg-[#0B0C10] dark:bg-[#050510]" />
-        
-        {/* Figma blur ellipses */}
-        <div className="absolute w-[469px] h-[469px] rounded-full bg-[#ff2225] opacity-40 blur-[130px] sm:blur-[275px] -left-1/4 -top-1/2 mix-blend-screen" />
-        <div className="absolute w-[477px] h-[477px] rounded-full bg-[#3e53f7] opacity-60 sm:opacity-80 blur-[130px] sm:blur-[225px] right-0 -top-1/2 mix-blend-screen mix-blend-color-dodge" />
-        
-        {/* Wave Separator Path */}
-        <svg
-          className="absolute bottom-0 w-full h-auto text-[#f4f3ff] dark:text-background"
-          viewBox="0 0 1440 211"
-          fill="none"
-          xmlns="http://www.w3.org/2000/svg"
-          preserveAspectRatio="none"
-        >
-          <path
-            d="M0 83.3138C265.5 137.892 481 213.91 762 171.691C1043 129.472 1311 26.3155 1440 0V211H0V83.3138Z"
-            fill="currentColor"
-          />
-        </svg>
-      </div>
+      {/* ═══════════════ DECORATIVE GLOW BLOBS ═══════════════ */}
+      <div className="absolute top-0 left-0 w-[400px] h-[400px] bg-red-500/10 blur-[120px] rounded-full -translate-x-1/2 -translate-y-1/2 pointer-events-none z-0" />
+      <div className="absolute top-0 right-0 w-[400px] h-[400px] bg-blue-500/10 blur-[120px] rounded-full translate-x-1/2 -translate-y-1/2 pointer-events-none z-0" />
 
-      {/* ── Header Content (Z-INDEX 10) ── */}
-      <div className="relative z-10 w-full h-[200px] sm:h-[250px] shrink-0 flex flex-col items-center justify-center pt-8">
-        
-        {/* Logo Text */}
-        <div className="absolute top-8 sm:top-14 mx-auto w-full text-center px-4">
-          <h1 
-            className="text-white text-3xl sm:text-[45px] font-['Montserrat'] tracking-[0.8em] sm:tracking-[1.2em] uppercase font-light mr-[-1.2em]"
-            style={{ textShadow: "0 0 40px rgba(255,255,255,0.4)" }}
-          >
-            AURASEEK
-          </h1>
+      {/* ═══════════════ HEADER (260px) ═══════════════ */}
+      <div className="relative shrink-0 overflow-visible flex flex-col justify-between" style={{ height: "280px", zIndex: 10 }}>
+
+        {/* Premium Dark Gradient */}
+        <div className="absolute inset-0" style={{
+          background: "linear-gradient(135deg, #020205 0%, #080a1a 40%, #1a0808 100%)",
+        }} />
+
+        {/* Cosmic Nodes Network Canvas */}
+        <SpaceNodes />
+
+        {/* Aura Blobs for High-Tech feel */}
+        <div className="absolute w-[500px] h-[500px] rounded-full opacity-30 blur-[100px] -left-40 -top-40 pointer-events-none"
+             style={{ background: "radial-gradient(circle, #3e53f7 0%, transparent 70%)" }} />
+        <div className="absolute w-[400px] h-[400px] rounded-full opacity-20 blur-[80px] right-0 top-0 pointer-events-none"
+             style={{ background: "radial-gradient(circle, #ff2225 0%, transparent 70%)" }} />
+
+        {/* Brand Row */}
+        <div className="relative z-10 flex items-center h-26 px-3 pt-4">
+          {/* Logo: Logo.png */}
+          <div className="flex items-center gap-4 mt-18">
+            <div className="relative w-[200px] h-[200px] flex items-center justify-center shrink-0">
+               <img src="/logo/Logo.png" alt="AuraSeek Logo" className="w-full h-full object-contain drop-shadow-[0_0_15px_rgba(255,255,255,0.2)]" />
+            </div>
+
+            {/* Typography: A U R A S E E K (Premium kerning) */}
+            <h1 className="text-white font-['Montserrat'] text-[50px] tracking-[1.2em] uppercase font-light translate-x-[0.1em]"
+                style={{ textShadow: "0 0 20px rgba(255,255,255,0.4)" }}>
+              AURASEEK
+            </h1>
+          </div>
+
+          {/* Sync Status Overlay (Right) */}
+          <div className="ml-auto hidden sm:flex items-center gap-4 text-[10px] font-bold tracking-widest text-white/50 uppercase">
+             {syncStatus?.state === "syncing" && (
+                <div className="flex items-center gap-2 text-blue-400">
+                   <RefreshCw className="w-3 h-3 animate-spin" /> <span>Đang đồng bộ</span>
+                </div>
+             )}
+             {syncStatus?.state === "done" && (
+                <div className="flex items-center gap-2 text-emerald-400">
+                   <CheckCircle2 className="w-3 h-3" /> <span>Hệ thống sẵn sàng</span>
+                </div>
+             )}
+          </div>
         </div>
 
-        {/* Floating Search Bar */}
-        <div className="w-full max-w-2xl px-6 mt-16 sm:mt-24 flex items-center relative z-20">
-          <div className={`flex-1 relative flex items-center bg-black/15 dark:bg-black/40 backdrop-blur-md rounded-full shadow-lg border border-white/10 transition-all ${searchFocused ? 'ring-2 ring-primary bg-black/30' : 'hover:bg-black/20'}`}>
-            
-            {imageFileName ? (
-              <div className="flex items-center gap-1.5 pl-4 pr-2 py-2 text-sm text-white shrink-0 max-w-[150px]">
-                <ImageIcon className="w-4 h-4 shrink-0 opacity-70" />
-                <span className="truncate">{imageFileName}</span>
-                <button onClick={() => onSearchImageChange?.(null)} className="rounded-full hover:bg-white/20 p-1 shrink-0 ml-1">
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ) : (
-              <Search className="w-5 h-5 text-white/50 ml-5 shrink-0" />
+        {/* Wave Divider — Tall and distinct wave */}
+        <div className="absolute bottom-0 left-0 w-full" style={{ height: "100px", zIndex: 30 }}>
+            <svg 
+               viewBox="0 0 1440 100" 
+               preserveAspectRatio="none" 
+               className="block w-full h-full"
+               xmlns="http://www.w3.org/2000/svg"
+               style={{ filter: "drop-shadow(0 -4px 16px rgba(0,0,0,0.1))" }}
+            >
+                <path 
+                  d="M0 60 C240 20, 480 90, 720 50 C960 10, 1200 80, 1440 40 L1440 100 L0 100 Z" 
+                  fill="white"
+                />
+            </svg>
+        </div>
+
+        {/* Selection mode indicator overlay */}
+        {selectedIds.size > 0 && (
+          <div className="absolute inset-x-0 w-full h-20 flex items-center justify-between px-8 bg-primary/40 backdrop-blur-xl z-[100] shadow-2xl top-0">
+             <div className="flex items-center gap-6">
+                <Button variant="ghost" size="icon" onClick={clearSelection} className="rounded-full text-white hover:bg-white/20"><X className="w-6 h-6" /></Button>
+                <span className="font-bold text-xl text-white tracking-wide">{selectedIds.size} mục đã chọn</span>
+             </div>
+          </div>
+        )}
+      </div>
+
+      {/* ═══════════════ SEARCH & ACTIONS ═══════════════ */}
+      <div className="relative z-20 w-full flex justify-center px-8 py-4 bg-white">
+        <div className="w-full max-w-4xl flex items-center gap-4">
+          
+          {/* Centered Pill Search Bar */}
+          <div className="flex-1 relative group">
+            <div className={cn(
+              "flex items-center rounded-full border transition-all duration-500 px-5 cursor-text",
+              searchFocused
+                ? "bg-gray-200 border-primary/40 ring-[6px] ring-primary/10 shadow-[0_12px_40px_rgba(0,0,0,0.1)] scale-[1.01]"
+                : "bg-gray-200 border-zinc-200 shadow-[0_4px_16px_rgba(0,0,0,0.04)] hover:border-primary/30 hover:shadow-[0_8px_32px_rgba(0,0,0,0.08)] hover:-translate-y-0.5"
             )}
-
-            <input
-              ref={searchInputRef}
-              type="text"
-              id="search-input"
-              defaultValue={searchQuery}
-              onInput={handleInput}
-              onCompositionStart={handleCompositionStart}
-              onCompositionEnd={handleCompositionEnd}
-              onFocus={handleFocus}
-              onBlur={() => { syncValue(); setTimeout(() => setSearchFocused(false), 200); }}
-              onKeyDown={handleKeyDown}
-              placeholder={searchImagePath ? "Thêm mô tả (tuỳ chọn)..." : "Tìm kiếm..."}
-              className="flex-1 h-14 bg-transparent border-none text-white placeholder-white/50 px-4 font-['Roboto'] text-[18px] sm:text-[22px] outline-none"
-            />
-
-            <div className="flex items-center gap-1 pr-3">
-              {(currentInputValue || searchImagePath) && (
-                <button onClick={clearSearch} className="rounded-full p-2 text-white/50 hover:text-white hover:bg-white/10 transition">
-                  <X className="w-4 h-4" />
-                </button>
-              )}
-              <button onClick={() => fileInputRef.current?.click()} className="rounded-full p-2 text-white/50 hover:text-white hover:bg-white/10 transition">
-                <Upload className="w-5 h-5" />
-              </button>
-              <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+            onClick={() => searchInputRef.current?.focus()}>
+              <Search className={cn("w-5 h-5 transition-colors duration-300", searchFocused ? "text-primary" : "text-zinc-400 group-hover:text-primary/70")} />
               
-              <Button
-                variant="ghost" 
-                size="icon"
-                onClick={() => setShowFilters(true)}
-                className={`rounded-full w-10 h-10 text-white/50 hover:text-white hover:bg-white/10 relative ml-1 ${hasActiveFilters ? 'text-white' : ''}`}
-              >
-                <Filter className="w-5 h-5" />
-                {hasActiveFilters && <div className="absolute top-2 right-2 w-2 h-2 bg-primary rounded-full" />}
-              </Button>
+              <input
+                ref={searchInputRef}
+                type="text"
+                id="search-input"
+                defaultValue={searchQuery}
+                onInput={handleInput}
+                onCompositionStart={handleCompositionStart}
+                onCompositionEnd={handleCompositionEnd}
+                onFocus={handleFocus}
+                onBlur={() => { syncValue(); setTimeout(() => setSearchFocused(false), 200); }}
+                onKeyDown={handleKeyDown}
+                placeholder="Tìm kiếm..."
+                className="flex-1 h-14 bg-transparent border-none text-black placeholder-zinc-400 px-4 font-['Roboto'] text-lg outline-none"
+              />
+
+              <div className="flex items-center gap-2">
+                {(currentInputValue || searchImagePath) && (
+                  <button onClick={clearSearch} className="rounded-full p-2 text-zinc-400 hover:text-zinc-900 transition">
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+                <button onClick={() => fileInputRef.current?.click()} className="rounded-full p-2 text-zinc-400 hover:text-primary transition" title="Tìm kiếm theo hình ảnh">
+                  <Upload className="w-5 h-5" />
+                </button>
+                <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+                <Button
+                  variant="ghost" 
+                  size="icon"
+                  onClick={() => setShowFilters(true)}
+                  className={cn("rounded-full w-10 h-10 transition-colors relative", hasActiveFilters ? "text-primary bg-primary/10" : "text-zinc-400 hover:text-primary hover:bg-zinc-100/50")}
+                >
+                  <Filter className="w-5 h-5" />
+                  {hasActiveFilters && <div className="absolute top-2 right-2 w-2 h-2 bg-primary rounded-full shadow-[0_0_10px_rgba(var(--primary),0.5)]" />}
+                </Button>
+              </div>
             </div>
-            
+
             {/* Search History Dropdown */}
             {searchFocused && !currentInputValue && !searchImagePath && searchHistory.length > 0 && (
-              <div className="absolute top-full mt-2 left-0 right-0 bg-white dark:bg-card border border-border/50 rounded-2xl shadow-2xl overflow-hidden py-2 px-2 animate-in fade-in slide-in-from-top-2 duration-200 z-[100]">
-                <div className="text-[11px] font-extrabold text-muted-foreground/50 px-4 py-2 uppercase tracking-[0.15em]">Tìm kiếm gần đây</div>
+              <div className="absolute top-full mt-3 left-0 right-0 bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-white/5 rounded-3xl shadow-2xl overflow-hidden py-3 px-3 z-[150] animate-in fade-in slide-in-from-top-4 duration-300">
+                <div className="text-[11px] font-black text-zinc-300 dark:text-white/20 px-4 py-2 uppercase tracking-[0.2em]">Tìm kiếm gần đây</div>
                 {searchHistory.map((q, i) => (
                   <button
                     key={i}
                     onMouseDown={(e) => {
-                      e.preventDefault(); // prevent blur
+                      e.preventDefault();
                       if (searchInputRef.current) searchInputRef.current.value = q;
                       onSearchQueryChange?.(q);
                       onSearchSubmit?.();
                       setSearchFocused(false);
                     }}
-                    className="w-full flex items-center gap-3 px-3 py-2 hover:bg-muted/50 rounded-xl cursor-pointer text-sm text-left text-foreground"
+                    className="w-full flex items-center gap-4 px-4 py-3 hover:bg-zinc-50 dark:hover:bg-white/5 rounded-2xl cursor-pointer text-base text-left text-zinc-700 dark:text-zinc-300 transition-colors"
                   >
-                    <History className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <History className="w-4 h-4 text-zinc-300" />
                     <span className="flex-1 truncate">{q}</span>
                   </button>
                 ))}
               </div>
             )}
           </div>
-        </div>
 
-        {/* Sync/Status Tags */}
-        <div className="absolute bottom-4 left-6 flex items-center gap-3 text-xs sm:text-sm font-['Roboto'] font-medium text-[#322e2e]/60 dark:text-white/40">
-           {initError && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">
-              <AlertCircle className="w-3.5 h-3.5" /> <span>DB offline</span>
-            </div>
-           )}
-           {syncStatus?.state === "syncing" && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-500/10 text-indigo-500 animate-pulse">
-              <RefreshCw className="w-3.5 h-3.5 animate-spin" /> <span>Đang đồng bộ...</span>
-            </div>
-           )}
-           {syncStatus?.state === "done" && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-500/10 text-emerald-600">
-              <CheckCircle2 className="w-3.5 h-3.5" /> <span>Đã đồng bộ</span>
-            </div>
-           )}
-           {syncStatus?.state === "error" && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-red-500/10 text-red-500">
-              <AlertCircle className="w-3.5 h-3.5" /> <span>Lỗi đồng bộ</span>
-            </div>
-           )}
-        </div>
-
-        {/* Floating Menu Button (Top Right) */}
-        <div className="absolute top-6 right-6 z-50">
+          {/* Grid Menu Trigger — Glassmorphism */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="w-14 h-14 rounded-full bg-white/20 dark:bg-black/30 hover:bg-white/30 dark:hover:bg-black/50 backdrop-blur-md shadow-lg border border-white/20">
-                <Grid3X3 className="w-6 h-6 text-white" />
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="w-14 h-14 rounded-full bg-gray-200 border border-zinc-200 shadow-[0_4px_16px_rgba(0,0,0,0.04)] hover:bg-gray-900 hover:border-primary/30 hover:shadow-[0_8px_32px_rgba(0,0,0,0.08)] hover:-translate-y-0.5 text-zinc-600 hover:text-primary transition-all duration-300 active:scale-95"
+              >
+                <Grid3X3 className="w-6 h-6" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-64 bg-white/70 dark:bg-black/70 backdrop-blur-2xl border-white/20 dark:border-white/10 shadow-2xl rounded-2xl p-2 font-['Roboto']">
-              <DropdownMenuLabel className="px-4 py-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">Các chức năng</DropdownMenuLabel>
-              <DropdownMenuSeparator className="bg-white/20 dark:bg-white/10" />
-              {menuItems.map(item => (
-                <DropdownMenuItem 
-                  key={item.key} 
-                  onClick={() => onNavClick?.(item.key)}
-                  className={`rounded-xl px-4 py-3 cursor-pointer mb-1 transition-colors ${activeKey === item.key ? 'bg-primary/20 text-primary font-medium' : 'hover:bg-black/5 dark:hover:bg-white/10 text-zinc-700 dark:text-zinc-200 font-medium'}`}
-                >
-                  <item.icon className="w-5 h-5 mr-3 opacity-70" />
-                  <span className="text-[16px]">{item.title}</span>
-                </DropdownMenuItem>
-              ))}
-              <DropdownMenuSeparator className="bg-white/20 dark:bg-white/10" />
+            <DropdownMenuContent 
+              align="end" 
+              className="w-72 mt-4 bg-white/70 dark:bg-black/40 backdrop-blur-3xl border-white/20 dark:border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.2)] rounded-[32px] p-3 font-['Roboto']"
+            >
+              <DropdownMenuLabel className="px-5 py-3 text-xs font-black uppercase tracking-[0.25em] text-white/30">Danh mục chính</DropdownMenuLabel>
+              <div className="space-y-1">
+                {menuItems.map(item => (
+                  <DropdownMenuItem 
+                    key={item.key} 
+                    onClick={() => onNavClick?.(item.key)}
+                    className={cn(
+                      "rounded-2xl px-5 py-4 cursor-pointer transition-all duration-200 group flex items-center gap-4",
+                      activeKey === item.key 
+                        ? "bg-white/15 text-white shadow-inner" 
+                        : "hover:bg-white/10 text-white/70 hover:text-white"
+                    )}
+                  >
+                    <div className={cn(
+                      "p-2 rounded-xl transition-colors",
+                      activeKey === item.key ? "bg-primary/20" : "bg-white/5 group-hover:bg-white/10"
+                    )}>
+                      <item.icon className="w-5 h-5" />
+                    </div>
+                    <span className="text-[17px] font-medium">{item.title}</span>
+                  </DropdownMenuItem>
+                ))}
+              </div>
+              <div className="h-px bg-white/5 my-3" />
               <DropdownMenuItem 
                 onClick={() => setShowSettings(true)}
-                className="rounded-xl px-4 py-3 cursor-pointer text-zinc-700 dark:text-zinc-200 hover:bg-black/5 dark:hover:bg-white/10"
+                className="rounded-2xl px-5 py-4 cursor-pointer text-white/50 hover:text-white hover:bg-white/5 flex items-center gap-4 transition-colors"
               >
-                <Settings className="w-5 h-5 mr-3 opacity-70" />
-                <span className="text-[16px]">Cài đặt</span>
+                <div className="p-2 rounded-xl bg-white/5 group-hover:bg-white/10">
+                  <Settings className="w-5 h-5" />
+                </div>
+                <span className="text-[17px]">Cài đặt</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-
-        {/* Selection mode indicator overlay */}
-        {selectedIds.size > 0 && (
-          <div className="absolute inset-x-0 w-full h-16 flex items-center justify-between px-6 bg-primary/20 backdrop-blur-md z-40 shadow-xl border-b border-primary/30 top-0">
-             <div className="flex items-center gap-4">
-                <Button variant="ghost" size="icon" onClick={clearSelection} className="rounded-full text-white hover:bg-white/20"><X className="w-5 h-5" /></Button>
-                <span className="font-bold text-lg text-white">{selectedIds.size} đã chọn</span>
-             </div>
-          </div>
-        )}
       </div>
 
-      {/* ── Main Content Area ── */}
-      <main className="flex flex-col flex-1 w-full overflow-hidden relative z-10">
-        {children}
+      {/* ═══════════════ MAIN CONTENT ═══════════════ */}
+      <main className="flex flex-col flex-1 w-full overflow-hidden relative z-10 bg-white">
+        <div className="w-full h-full">
+          {children}
+        </div>
       </main>
 
       <FilterPanel open={showFilters} onOpenChange={setShowFilters} activeFilters={activeFilters} onFiltersChange={onFiltersChange} />

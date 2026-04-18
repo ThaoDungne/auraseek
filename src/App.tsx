@@ -12,6 +12,7 @@ import { HiddenView } from "@/views/hidden/HiddenView";
 import { FilteredGalleryView } from "@/views/gallery/FilteredGalleryView";
 import { SearchResultsView } from "@/views/search/SearchResultsView";
 import { FirstRunModal } from "@/components/common/FirstRunModal";
+import { LandingPage } from "@/views/LandingPage";
 import ModelDownloadScreen, { type ModelDownloadEvent } from "@/components/common/ModelDownloadScreen";
 import { AuraSeekApi, localFileUrl, streamFileUrl, warmStreamPortCache, type SearchResult, type TimelineGroup, type PersonGroup, type SearchFilters as ApiFilters, type SyncStatus } from "@/lib/api";
 import type { Photo } from "@/types/photo.type";
@@ -30,6 +31,7 @@ export type ActiveFilters = {
 };
 
 function App() {
+  const [hasStarted, setHasStarted] = useState(false);
   const [route, setRoute] = useState<AppRoute>({ view: "timeline" });
   const [searchQuery, setSearchQuery] = useState("");
   const [searchImagePath, setSearchImagePath] = useState<string | null>(null);
@@ -175,12 +177,70 @@ function App() {
   const loadTimeline = useCallback(async () => {
     try {
       console.log("[AuraSeek] 📅 Loading timeline...");
-      const groups = await AuraSeekApi.getTimeline();
+      
+      let groups = await AuraSeekApi.getTimeline();
+      
+      // MOCK DATA: Lấy tất cả file trong folder assets/image
+      const mockFiles = import.meta.glob('@/assets/image/*.{jpg,jpeg,png,webp,mp4}', { eager: true, import: 'default' }) as Record<string, string>;
+      const mockPhotos: Photo[] = Object.entries(mockFiles).map(([path, url], i) => {
+        const isVideo = path.endsWith('.mp4');
+        return {
+          id: `mock-${i}`,
+          url: url,
+          takenAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          sizeBytes: 0,
+          width: 800,
+          height: 600,
+          objects: ["mock"],
+          faces: [],
+          faceIds: [],
+          type: isVideo ? "video" : "photo",
+          labels: ["mock"],
+          favorite: false,
+          detectedObjects: [],
+          detectedFaces: [],
+          thumbnailUrl: url,
+          filePath: url,
+        };
+      });
+
+      if (mockPhotos.length > 0) {
+        const mockGroup: TimelineGroup = {
+          label: "Dữ liệu mẫu",
+          year: new Date().getFullYear(),
+          month: new Date().getMonth() + 1,
+          day: new Date().getDate(),
+          items: mockPhotos.map(p => ({
+            media_id: p.id,
+            file_path: p.url, // Path to be able to render it
+            media_type: p.type || "photo",
+            width: p.width,
+            height: p.height,
+            created_at: p.createdAt,
+            objects: p.objects || [],
+            faces: p.faces || [],
+            face_ids: p.faceIds || [],
+            favorite: !!p.favorite,
+            detected_objects: p.detectedObjects || [],
+            detected_faces: p.detectedFaces || [],
+            thumbnail_path: p.thumbnailUrl,
+          }))
+        };
+        // Thêm mock data lên đầu tiên
+        groups = [mockGroup, ...groups];
+      }
+
       setTimelineGroups(groups);
       console.log("[AuraSeek] 📅 Timeline loaded:", groups.length, "groups");
 
       const allPhotos: Photo[] = await Promise.all(groups.flatMap(g =>
         g.items.map(async item => {
+          if (item.media_id.startsWith('mock-')) {
+            // For mock items, url and thumbnail are already setup above
+            return mockPhotos.find(p => p.id === item.media_id)!;
+          }
+
           // Video thumbnails are absolute paths in the thumbnails cache dir.
           // Serve them via the local Axum HTTP server to bypass WebKit asset:// restrictions.
           let thumbnailUrl: string | undefined;
@@ -408,7 +468,7 @@ function App() {
     setSearchResults([]);
     setSearchQuery("");
     setSearchImagePath(null);
-    if (key === "timeline") loadTimeline();
+    if (key === "timeline" || key === "all") loadTimeline();
     if (key === "people") { loadPeople(); loadTimeline(); }
   }, [loadTimeline, loadPeople]);
 
@@ -521,6 +581,16 @@ function App() {
         return <TrashView />;
       case "hidden":
         return <HiddenView />;
+      case "all":
+        return (
+          <TimelineView
+            timelineGroups={timelineGroups}
+            photos={photos}
+            searchQuery={searchQuery}
+            isLoading={!isInitialized}
+            selectionMode={selectionMode}
+          />
+        );
       case "timeline":
       default:
         return (
@@ -535,6 +605,10 @@ function App() {
         );
     }
   };
+
+  if (!hasStarted) {
+    return <LandingPage onStart={() => setHasStarted(true)} />;
+  }
 
   return (
     <SelectionProvider>

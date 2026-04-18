@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from "react";
-import { ArrowLeft, Sparkles, SortAsc, Play } from "lucide-react";
+import { ArrowLeft, Sparkles, SortAsc, Play, Heart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { SearchResult } from "@/lib/api";
-import { localFileUrl, streamFileUrlSync } from "@/lib/api";
+import { localFileUrl, streamFileUrlSync, AuraSeekApi } from "@/lib/api";
 import { SegmentOverlay } from "@/components/photos/SegmentOverlay";
 import { FullScreenViewer } from "@/components/photo-detail/FullScreenViewer";
 import type { Photo } from "@/types/photo.type";
@@ -136,6 +136,7 @@ function SearchResultCard({
     const [displayH, setDisplayH] = useState(0);
     const [activeObjectIndex, setActiveObjectIndex] = useState<number | null>(null);
     const hoverTimerRef = useRef<number | null>(null);
+    const [isFavorite, setIsFavorite] = useState(false);
 
     useEffect(() => {
         const el = imgRef.current;
@@ -147,6 +148,19 @@ function SearchResultCard({
         ro.observe(el);
         return () => ro.disconnect();
     }, []);
+
+    const handleFavorite = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        const next = !isFavorite;
+        setIsFavorite(next);
+        window.dispatchEvent(new CustomEvent("photo_toggle_favorite", { detail: { id: result.media_id } }));
+        try {
+            await AuraSeekApi.toggleFavorite(result.media_id);
+        } catch {
+            setIsFavorite(!next);
+            window.dispatchEvent(new Event("refresh_photos"));
+        }
+    };
 
     const hasOverlays =
         !isVideo && (
@@ -274,6 +288,23 @@ function SearchResultCard({
                     <span>VIDEO</span>
                 </div>
             )}
+
+            {/* Favourite heart */}
+            <div
+                role="button"
+                onClick={handleFavorite}
+                className={`absolute right-2 top-2 z-10 rounded-full p-1 transition-all duration-200 ${
+                    isFavorite
+                        ? "opacity-100"
+                        : "opacity-0 group-hover:opacity-100 hover:scale-110"
+                }`}
+            >
+                <Heart className={`w-5 h-5 transition-colors drop-shadow-md ${
+                    isFavorite
+                        ? "fill-red-500 text-red-500"
+                        : "fill-black/30 text-white/90 hover:fill-red-500 hover:text-red-500"
+                }`} />
+            </div>
         </div>
     );
 }

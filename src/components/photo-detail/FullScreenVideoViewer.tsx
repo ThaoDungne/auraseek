@@ -9,6 +9,7 @@ import { ExternalLink } from "lucide-react";
 import type { Photo } from "@/types/photo.type";
 import { PhotoInfoPanel } from "./PhotoInfoPanel";
 import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { AuraSeekApi } from "@/lib/api";
 import { FullScreenTopBar } from "./FullScreenTopBar";
 import { openPath } from "@tauri-apps/plugin-opener";
@@ -138,8 +139,8 @@ export function FullScreenVideoViewer({
         }
     };
 
-    return (
-        <div className="fixed inset-0 z-50 flex bg-background w-full h-full text-foreground">
+    return createPortal(
+        <div className="fixed inset-0 z-[9999] flex bg-background w-full h-full text-foreground">
             <div className="relative flex-1 flex flex-col overflow-hidden bg-black transition-all">
                 <FullScreenTopBar
                     hasOverlays={false}
@@ -220,6 +221,7 @@ export function FullScreenVideoViewer({
                     </div>
                 </div>
             )}
-        </div>
+        </div>,
+        document.body
     );
 }

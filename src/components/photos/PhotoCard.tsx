@@ -86,10 +86,10 @@ export function PhotoCard({
       onClick={selectionMode ? handleSelect : onClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      className={cn("group relative block overflow-hidden bg-background rounded-[20px]", className || "aspect-4/3")}
+      className={cn("group relative block overflow-hidden bg-zinc-200 dark:bg-zinc-800 rounded-2xl shadow-sm transition-shadow hover:shadow-xl", className || "w-full h-full")}
     >
       <div className={cn(
-        "w-full h-full transition-all duration-200 ease-out relative",
+        "w-full h-full transition-all duration-300 ease-out relative",
         isSelected && selectionMode ? "p-3" : "p-0"
       )}>
 
@@ -100,9 +100,9 @@ export function PhotoCard({
             src={photo.thumbnailUrl || photo.url}
             alt="Video"
             className={cn(
-              "h-full w-full select-none object-cover transition-transform duration-500 ease-out",
-              !(isSelected && selectionMode) && "group-hover:scale-[1.03]",
-              isSelected && selectionMode && "rounded-lg"
+              "h-full w-full select-none object-cover transition-transform duration-700 ease-out",
+              !(isSelected && selectionMode) && "group-hover:scale-110",
+              isSelected && selectionMode && "rounded-xl"
             )}
             draggable={false}
           />
@@ -113,9 +113,9 @@ export function PhotoCard({
             src={photo.url}
             alt="Photo"
             className={cn(
-              "h-full w-full select-none object-cover transition-transform duration-500 ease-out",
-              !(isSelected && selectionMode) && "group-hover:scale-[1.03]",
-              isSelected && selectionMode && "rounded-lg"
+              "h-full w-full select-none object-cover transition-transform duration-700 ease-out",
+              !(isSelected && selectionMode) && "group-hover:scale-110",
+              isSelected && selectionMode && "rounded-xl"
             )}
             draggable={false}
           />

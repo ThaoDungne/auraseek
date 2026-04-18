@@ -1,5 +1,5 @@
 import type React from "react";
-import { ArrowLeft, Info, Share2, Star, Trash2, Eye, EyeOff, ZoomIn, Undo, Scan, Paintbrush } from "lucide-react";
+import { ArrowLeft, Info, Share2, Heart, Trash2, Eye, EyeOff, ZoomIn, Undo, Scan, Paintbrush } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
@@ -182,12 +182,12 @@ export function FullScreenTopBar({
                                     size="icon"
                                     className={`rounded-full transition-colors ${
                                         isFavorite
-                                            ? "text-yellow-400 bg-yellow-400/10 hover:bg-yellow-400/20"
+                                            ? "text-red-500 bg-red-500/10 hover:bg-red-500/20"
                                             : "text-white hover:bg-white/10"
                                     }`}
                                     onClick={onToggleFavorite}
                                 >
-                                    <Star className={`w-5 h-5 ${isFavorite ? "fill-current" : ""}`} />
+                                    <Heart className={`w-5 h-5 ${isFavorite ? "fill-current" : ""}`} />
                                 </Button>
                             </TooltipTrigger>
                             <TooltipContent side="bottom" className="text-xs">
