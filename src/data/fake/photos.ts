@@ -1,0 +1,90 @@
+import type { Photo } from "@/types/photo.type";
+
+export const fakePhotos: Photo[] = [
+  {
+    id: "1",
+    url: "https://picsum.photos/seed/aura-1/1200/800",
+    takenAt: "2025-11-02T11:46:00+07:00",
+    createdAt: "2025-11-02T11:46:00+07:00",
+    sizeBytes: 4_600_000,
+    width: 3024,
+    height: 4032,
+    cameraModel: "Google Pixel 4 XL",
+    iso: 1199,
+    focalLength: 4.38,
+    location: {
+      latitude: 10.762622,
+      longitude: 106.660172,
+      address: "Thành phố Hồ Chí Minh, Việt Nam",
+      placeName: "Chợ đầu mối",
+    },
+    objects: ["phone", "receipt"],
+    textSnippets: ["Giao dịch thành công", "150,000 VND"],
+    people: [{ id: "person-mother", name: "Mẹ" }],
+    favorite: true,
+    labels: ["Hóa đơn", "Ngân hàng"],
+  },
+  {
+    id: "2",
+    url: "https://picsum.photos/seed/aura-2/1200/800",
+    takenAt: "2025-11-09T09:15:00+07:00",
+    createdAt: "2025-11-09T09:15:00+07:00",
+    sizeBytes: 3_200_000,
+    width: 4000,
+    height: 3000,
+    cameraModel: "Google Pixel 4 XL",
+    location: {
+      latitude: 10.78,
+      longitude: 106.67,
+      address: "Thành phố Hồ Chí Minh, Việt Nam",
+      placeName: "Chợ đầu mối",
+    },
+    objects: ["onion"],
+    labels: ["Hàng hóa", "Chợ"],
+  },
+  {
+    id: "3",
+    url: "https://picsum.photos/seed/aura-3/1200/800",
+    takenAt: "2025-10-15T18:30:00+07:00",
+    createdAt: "2025-10-15T18:30:00+07:00",
+    sizeBytes: 3_800_000,
+    width: 4032,
+    height: 3024,
+    cameraModel: "Google Pixel 4 XL",
+    people: [
+      { id: "person-friend-1", name: "Bạn A" },
+      { id: "person-friend-2", name: "Bạn B" },
+    ],
+    labels: ["Kỷ niệm", "Bạn bè"],
+  },
+  {
+    id: "4",
+    url: "https://picsum.photos/seed/aura-4/1200/800",
+    takenAt: "2024-11-02T11:46:00+07:00",
+    createdAt: "2024-11-02T11:46:00+07:00",
+    sizeBytes: 4_100_000,
+    width: 3024,
+    height: 4032,
+    cameraModel: "Google Pixel 4 XL",
+    objects: ["document"],
+    textSnippets: ["Hóa đơn", "Thanh toán"],
+    labels: ["Giấy tờ", "Hóa đơn"],
+  },
+  ...Array.from({ length: 90 }).map((_, i) => {
+    const isVideo = Math.random() > 0.85;
+    return {
+      id: `gen-${i}`,
+      url: `https://picsum.photos/seed/${i + 500}/1200/800`,
+      takenAt: new Date(Date.now() - Math.floor(Math.random() * 150) * 86400000).toISOString(),
+      createdAt: new Date().toISOString(),
+      sizeBytes: Math.floor(Math.random() * 5_000_000) + 1_000_000,
+      width: 1200,
+      height: 800,
+      cameraModel: i % 3 === 0 ? "iPhone 15 Pro" : "Sony A7III",
+      type: isVideo ? "video" : "photo",
+      favorite: Math.random() > 0.8,
+      people: Math.random() > 0.6 ? [{ id: `face-${i % 10}`, name: `Person ${i % 10}` }] : undefined,
+    } as Photo;
+  })
+];
+

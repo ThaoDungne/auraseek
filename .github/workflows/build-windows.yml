@@ -1,0 +1,143 @@
+name: Build Tauri Windows 
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - '**'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---------- NODE ----------
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # ---------- RUST ----------
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      # ---------- SURREAL ----------
+
+      - name: Setup SurrealDB
+        shell: pwsh
+        run: |
+          $ReleaseUrls = (Invoke-RestMethod https://api.github.com/repos/surrealdb/surrealdb/releases/latest).assets.browser_download_url
+          $WindowsUrl = $ReleaseUrls | Where-Object { $_ -match "windows-amd64.exe" }
+
+          New-Item -Path "src-tauri/binaries" -ItemType Directory -Force | Out-Null
+
+          Invoke-WebRequest $WindowsUrl `
+            -OutFile "src-tauri/binaries/surreal-x86_64-pc-windows-msvc.exe"
+
+      # ---------- VCPKG ROOT ----------
+
+      - name: Set VCPKG root
+        shell: pwsh
+        run: |
+          "VCPKG_ROOT=C:\vcpkg" | Out-File $env:GITHUB_ENV -Append
+          "VCPKG_INSTALLATION_ROOT=C:\vcpkg" | Out-File $env:GITHUB_ENV -Append
+
+      # ---------- CACHE ----------
+
+      - uses: actions/cache@v4
+        with:
+          path: C:\vcpkg\installed
+          key: ${{ runner.os }}-vcpkg-${{ hashFiles('src-tauri/Cargo.lock') }}
+
+      - uses: actions/cache@v4
+        with:
+          path: C:\vcpkg\downloads
+          key: ${{ runner.os }}-vcpkg-downloads
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      # ---------- LLVM ----------
+
+      - name: Install LLVM
+        run: choco install llvm --yes
+        shell: powershell
+
+      # ---------- OPENCV ----------
+
+      - name: Install OpenCV with OpenCL
+        shell: bash
+        run: |
+          vcpkg install opencv4[contrib,nonfree,opencl]:x64-windows
+          vcpkg integrate install
+
+      - name: Copy OpenCV runtime DLLs into binaries
+        shell: pwsh
+        run: |
+          $src = "C:\vcpkg\installed\x64-windows\bin"
+          $dst = "src-tauri\binaries"
+          New-Item -Path $dst -ItemType Directory -Force | Out-Null
+          $dlls = @(
+            "opencv_core4.dll",
+            "opencv_imgcodecs4.dll",
+            "opencv_imgproc4.dll",
+            "opencv_dnn4.dll",
+            "opencv_objdetect4.dll",
+            "opencv_highgui4.dll"
+          )
+          foreach ($dll in $dlls) {
+            $from = Join-Path $src $dll
+            if (Test-Path $from) {
+              Copy-Item $from (Join-Path $dst $dll) -Force
+            } else {
+              Write-Host "Warning: $from not found"
+            }
+          }
+
+      # ---------- SET ENV ----------
+
+      - name: Set OpenCV ENV
+        shell: pwsh
+        run: |
+
+          $root = "C:\vcpkg"
+          $libDir = "$root\installed\x64-windows\lib"
+
+          $libs = Get-ChildItem $libDir -Filter "opencv_*.lib"
+
+          $names = $libs | ForEach-Object {
+            [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
+          }
+
+          $linkLibs = $names -join ","
+
+          "OPENCV_LINK_LIBS=$linkLibs" | Out-File $env:GITHUB_ENV -Append
+          "OPENCV_LINK_PATHS=$libDir" | Out-File $env:GITHUB_ENV -Append
+          "VCPKGRS_DYNAMIC=1" | Out-File $env:GITHUB_ENV -Append
+
+          # KEEP OPENCL
+          "OPENCV_DISABLE_OPENCL=0" | Out-File $env:GITHUB_ENV -Append
+
+      # ---------- FRONTEND ----------
+
+      - run: yarn install
+
+      # ---------- BUILD ----------
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ---------- ARTIFACT ----------
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AuraSeek-Windows
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi

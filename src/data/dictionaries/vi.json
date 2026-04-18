@@ -1,0 +1,21 @@
+{
+  "sidebar": {
+    "groupCore": "AuraSeek Core",
+    "timelineView": "Dòng thời gian",
+    "photos": "Ảnh",
+    "videos": "Video",
+    "faceGrouping": "Nhóm khuôn mặt",
+    "manageFolders": "Quản lý thư mục",
+    "settings": "Cài đặt"
+  },
+  "topbar": {
+    "searchPlaceholder": "Tìm ảnh theo văn bản, đối tượng, theo tháng...",
+    "advancedFilters": "Bộ lọc nâng cao",
+    "photosIndexed": "Ảnh đã lập chỉ mục"
+  },
+  "language": {
+    "en": "Tiếng Anh",
+    "vi": "Tiếng Việt"
+  }
+}
+

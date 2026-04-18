@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+auraseek_data/*
+src-tauri/binaries/*
+src-tauri/input1/*
+src-tauri/output/*

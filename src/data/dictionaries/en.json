@@ -1,0 +1,21 @@
+{
+  "sidebar": {
+    "groupCore": "AuraSeek Core",
+    "timelineView": "Timeline View",
+    "photos": "Photos",
+    "videos": "Videos",
+    "faceGrouping": "Face Grouping",
+    "manageFolders": "Manage Folders",
+    "settings": "Settings"
+  },
+  "topbar": {
+    "searchPlaceholder": "Search image by text, objects, objects in month...",
+    "advancedFilters": "Advanced Filters",
+    "photosIndexed": "Photos Indexed"
+  },
+  "language": {
+    "en": "English",
+    "vi": "Vietnamese"
+  }
+}
+
