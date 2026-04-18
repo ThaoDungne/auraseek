@@ -37,6 +37,19 @@ fn default_config() -> EngineConfig {
     }
 }
 
+pub fn config_from_model_dir(model_dir: &str) -> EngineConfig {
+    EngineConfig {
+        vision_path:  format!("{}/models/vision_visclir.onnx", model_dir),
+        text_path:    format!("{}/models/text_visclir.onnx", model_dir),
+        yolo_path:    format!("{}/models/yolo26n-seg.onnx", model_dir),
+        yunet_path:   format!("{}/models/face_detection_yunet_2022mar.onnx", model_dir),
+        sface_path:   format!("{}/models/face_recognition_sface_2021dec.onnx", model_dir),
+        vocab_path:   format!("{}/tokenizer/vocab.txt", model_dir),
+        bpe_path:     format!("{}/tokenizer/bpe.codes", model_dir),
+        face_db_path: format!("{}/face_db", model_dir),
+    }
+}
+
 pub struct EngineConfig {
     pub vision_path: String,
     pub text_path: String,

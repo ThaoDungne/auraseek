@@ -37,8 +37,8 @@ pub async fn cmd_auto_scan(
 
     let ram_pct = available_ram_percent();
     crate::log_info!("🖥️  Available RAM: {:.1}%", ram_pct);
-    if ram_pct < 40.0 {
-        let msg = format!("Không đủ RAM ({:.1}% trống, cần >40%). Đóng bớt ứng dụng và thử lại.", ram_pct);
+    if ram_pct < 5.0 {
+        let msg = format!("Không đủ RAM ({:.1}% trống, cần >5%). Đóng bớt ứng dụng và thử lại.", ram_pct);
         crate::log_warn!("⚠️ {}", msg);
         return Err(msg);
     }

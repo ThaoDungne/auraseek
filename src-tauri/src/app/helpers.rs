@@ -2,11 +2,29 @@ use crate::app::state::AppState;
 
 pub fn available_ram_percent() -> f64 {
     use sysinfo::System;
-    let mut sys = System::new_all();
+    let mut sys = System::new();
     sys.refresh_memory();
-    let total = sys.total_memory();
-    let avail = sys.available_memory();
-    if total > 0 { (avail as f64 / total as f64) * 100.0 } else { 50.0 }
+
+    let total = sys.total_memory() as f64;
+    let available = sys.available_memory() as f64;
+    let free = sys.free_memory() as f64;
+    let used = sys.used_memory() as f64;
+
+    let avail = if available > 0.0 {
+        available
+    } else if free > 0.0 {
+        free
+    } else if total > 0.0 {
+        (total - used).max(0.0)
+    } else {
+        0.0
+    };
+
+    if total > 0.0 {
+        (avail / total) * 100.0
+    } else {
+        50.0
+    }
 }
 
 pub fn restart_fs_watcher(state: &AppState, source_dir: &str) {

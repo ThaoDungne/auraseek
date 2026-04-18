@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::fs;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
@@ -126,6 +127,42 @@ impl SurrealService {
         Some(lines[start..].join("\n"))
     }
 
+    fn cleanup_stale_files(data_dir: &Path) -> Result<()> {
+        let db_path = data_dir.join("auraseek.db");
+        if db_path.exists() {
+            let lock_path = db_path.join("LOCK");
+            if lock_path.exists() {
+                crate::log_warn!(
+                    "⚠️  Stale SurrealDB lock file found, removing {}",
+                    lock_path.display()
+                );
+                fs::remove_file(&lock_path)
+                    .with_context(|| format!("Failed to remove stale lock file {}", lock_path.display()))?;
+
+                let log_path = data_dir.join("surreal.log");
+                if log_path.exists() {
+                    crate::log_warn!(
+                        "⚠️  Removing existing SurrealDB log file {} because stale lock was found",
+                        log_path.display()
+                    );
+                    fs::remove_file(&log_path)
+                        .with_context(|| format!("Failed to remove stale SurrealDB log file {}", log_path.display()))?;
+                }
+
+                let app_log_path = crate::core::config::AppConfig::global().log_path.clone();
+                if app_log_path.exists() {
+                    crate::log_warn!(
+                        "⚠️  Removing stale AuraSeek app log file {}",
+                        app_log_path.display()
+                    );
+                    fs::remove_file(&app_log_path)
+                        .with_context(|| format!("Failed to remove stale AuraSeek app log file {}", app_log_path.display()))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn ensure(
         resource_dir: &Path,
         data_dir:     &Path,
@@ -138,6 +175,8 @@ impl SurrealService {
             .ok_or_else(|| anyhow::anyhow!(
                 "SurrealDB binary not found. It should have been downloaded on first launch."
             ))?;
+
+        Self::cleanup_stale_files(data_dir)?;
 
         let kv_uri = "rocksdb://auraseek.db".to_string();
         let mut child = Self::start(&binary, data_dir, port, user, pass, &kv_uri)?;

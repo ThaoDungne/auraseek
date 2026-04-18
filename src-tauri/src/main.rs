@@ -145,15 +145,24 @@ fn main() -> Result<()> {
     let _ = dotenvy::dotenv();
 
     let log_path = crate::platform::paths::default_log_path();
+    eprintln!("[main] Log path from default_log_path(): {}", log_path);
     Logger::init(&log_path);
 
     #[cfg(feature = "debug-tools")]
     {
-        let run_cli_debug_ingest = false;
+        eprintln!("DEBUG: debug-tools feature is ENABLED");
+        let run_cli_debug_ingest = true;
         if run_cli_debug_ingest {
+            eprintln!("DEBUG: About to call debug::cli::run_debug_ingest");
             debug::cli::run_debug_ingest("input1", "output")?;
+            eprintln!("DEBUG: debug::cli::run_debug_ingest completed");
             return Ok(());
         }
+    }
+
+    #[cfg(not(feature = "debug-tools"))]
+    {
+        eprintln!("DEBUG: debug-tools feature is NOT ENABLED");
     }
 
     run();

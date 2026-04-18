@@ -29,12 +29,24 @@ pub const RESET:   &str = "\x1b[0m";
 
 impl Logger {
     pub fn init(path: &str) {
+        eprintln!("[Logger] Initializing with log path: {}", path);
+        
         if let Some(parent) = Path::new(path).parent() {
-            let _ = create_dir_all(parent);
+            if let Err(e) = create_dir_all(parent) {
+                eprintln!("[Logger] Failed to create log directory {}: {}", parent.display(), e);
+                return;
+            }
         }
-        if let Ok(file) = OpenOptions::new().create(true).append(true).open(path) {
-            let mut internal = GLOBAL_LOGGER.file.lock().unwrap();
-            *internal = Some(file);
+        
+        match OpenOptions::new().create(true).append(true).open(path) {
+            Ok(file) => {
+                let mut internal = GLOBAL_LOGGER.file.lock().unwrap();
+                *internal = Some(file);
+                eprintln!("[Logger] Successfully opened log file: {}", path);
+            }
+            Err(e) => {
+                eprintln!("[Logger] Failed to open log file {}: {}", path, e);
+            }
         }
     }
 
@@ -62,6 +74,7 @@ impl Logger {
             if let Some(file) = internal.as_mut() {
                 let clean_msg = Self::remove_ansi(&console_msg);
                 let _ = writeln!(file, "{}", clean_msg);
+                let _ = file.flush();
             }
         }
     }

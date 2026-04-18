@@ -21,7 +21,7 @@ use opencv::{
     prelude::*,
 };
 
-use crate::infrastructure::ai::AuraSeekEngine;
+use crate::infrastructure::ai::{AuraSeekEngine, config_from_model_dir};
 use crate::infrastructure::ai::vision::{cosine_similarity, letterbox_640, preprocess_aura};
 use crate::infrastructure::ai::vision::{YoloProcessor, DetectionRecord};
 use crate::infrastructure::ingest::{probe_video, detect_scenes, extract_frame, is_good_brightness};
@@ -30,6 +30,7 @@ use crate::shared::visualization::{
     draw_detections, draw_faces, draw_segmentation, extract_masks, load_rgb, save_rgb,
 };
 use crate::shared::{BOLD, CYAN, GREEN, MAGENTA, RESET};
+use crate::platform::paths;
 
 const FONT_PATH: Option<&'static str> = Some("assets/fonts/DejaVuSans.ttf");
 
@@ -37,14 +38,38 @@ const FONT_PATH: Option<&'static str> = Some("assets/fonts/DejaVuSans.ttf");
 
 /// For every image+video in `input_dir`, run the full pipeline and write debug artifacts to `output_dir`.
 pub fn run_debug_ingest(input_dir: &str, output_dir: &str) -> Result<()> {
-    crate::log_info!("🛠️  Debug CLI — full pipeline simulation");
-    crate::log_info!("  input : {}", input_dir);
-    crate::log_info!("  output: {}", output_dir);
+    eprintln!("DEBUG: Starting run_debug_ingest with input_dir={}, output_dir={}", input_dir, output_dir);
 
     std::fs::create_dir_all(input_dir)?;
     std::fs::create_dir_all(output_dir)?;
 
-    let mut engine = AuraSeekEngine::new_default()?;
+    // Get data directory for models
+    let data_dir = crate::platform::paths::fallback_data_dir();
+    eprintln!("DEBUG: Using data directory: {}", data_dir.display());
+
+    // Download models if missing
+    eprintln!("DEBUG: About to check for models...");
+    crate::log_info!("🔍 Checking for required models and assets...");
+    let rt = tokio::runtime::Runtime::new().map_err(|e| {
+        eprintln!("DEBUG: Failed to create tokio runtime: {}", e);
+        e
+    })?;
+    eprintln!("DEBUG: Created tokio runtime successfully");
+
+    rt.block_on(async {
+        eprintln!("DEBUG: Inside async block, calling download_if_missing");
+        if let Err(e) = crate::debug::DebugModelDownloader::download_if_missing(&data_dir).await {
+            eprintln!("DEBUG: Download failed with error: {}", e);
+            crate::log_error!("❌ Failed to download models: {}", e);
+            return Err(e);
+        }
+        eprintln!("DEBUG: Download completed successfully");
+        Ok(())
+    })?;
+
+    eprintln!("DEBUG: About to create AuraSeekEngine");
+    let config = config_from_model_dir(&data_dir.to_string_lossy());
+    let mut engine = AuraSeekEngine::new(config)?;
 
     // Collect both images and videos
     let mut image_entries: Vec<PathBuf> = Vec::new();
@@ -306,24 +331,23 @@ fn process_one(engine: &mut AuraSeekEngine, path: &Path, output_base: &str) -> R
     let params = Vector::<i32>::new();
 
     if let Some(ref mut fm) = engine.face {
-        for (n, (crop, offset)) in detect_regions.iter().enumerate() {
-            // Save raw person crop
-            let crop_path = format!("{out_dir}/face_crop_{n:02}.jpg");
-            let _ = imwrite(&crop_path, crop, &params);
-
-            // Detect with aligned mats
-            let results = fm.detect_from_mat_with_aligned(&frame_cv, &engine.face_db)?;
+        // Perform face detection once on the full frame
+        if let Ok(results) = fm.detect_from_mat_with_aligned(&frame_cv, &engine.face_db) {
             for (mut fg, aligned) in results {
-                // Offset bbox if detecting from person crop
-                if !person_bboxes.is_empty() {
-                    fg.bbox[0] += offset[0]; fg.bbox[2] += offset[0];
-                    fg.bbox[1] += offset[1]; fg.bbox[3] += offset[1];
-                }
                 // Save aligned 112×112 crop
-                let aligned_path = format!("{out_dir}/face_aligned_{:02}_{n:02}.jpg", faces.len());
+                let aligned_path = format!("{out_dir}/face_aligned_{:02}.jpg", faces.len());
                 let _ = imwrite(&aligned_path, &aligned, &params);
                 faces.push(fg);
             }
+        } else {
+            // Face detection failed gracefully, continue without faces
+            crate::log_info!("  [3/4] face detection skipped (model error)");
+        }
+        
+        // Save YOLO person crops for reference
+        for (n, (crop, _offset)) in detect_regions.iter().enumerate() {
+            let crop_path = format!("{out_dir}/face_crop_{n:02}.jpg");
+            let _ = imwrite(&crop_path, crop, &params);
         }
 
         // Session-based unknown grouping
